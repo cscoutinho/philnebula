@@ -1,0 +1,6 @@
+{
+  "name": "PhilPapers Interactive Nebula (Refactored)",
+  "description": "An interactive force-directed graph visualization of the PhilPapers taxonomy, allowing users to explore philosophical categories, find AI-discovered connections, and build their own conceptual maps.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
