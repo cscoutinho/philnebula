@@ -109,6 +109,7 @@ const StudioPanel: React.FC<StudioPanelProps> = ({ state, initialNotes, nodeName
     const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
     const [isFontSizePickerOpen, setIsFontSizePickerOpen] = useState(false);
     const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
+    const [isStylusDetected, setIsStylusDetected] = useState(false);
 
     const panelRef = useRef<HTMLDivElement>(null);
     const headerRef = useRef<HTMLDivElement>(null);
@@ -223,6 +224,122 @@ const StudioPanel: React.FC<StudioPanelProps> = ({ state, initialNotes, nodeName
         cleanupAiInteraction();
         setContent(newContent);
     };
+
+    // Stylus detection for optimized input handling (silent detection)
+    const handleStylusDetection = useCallback(() => {
+        setIsStylusDetected(true);
+        // Silent detection - just track that stylus is being used for internal optimizations
+    }, []);
+
+    // Enhanced stylus/pen support for Android devices with silent detection
+    const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        // Multiple detection methods for stylus
+        const isDirectPen = e.pointerType === 'pen';
+        const isHeuristicStylus = e.pointerType === 'touch' && (
+            e.pressure > 0.3 || 
+            (e.width > 0 && e.width < 15) || 
+            (e.height > 0 && e.height < 15)
+        );
+
+        if (isDirectPen) {
+            handleStylusDetection();
+        } else if (isHeuristicStylus) {
+            handleStylusDetection();
+        }
+
+        if (isDirectPen || isHeuristicStylus) {
+            // Enable high precision mode for stylus
+            const target = e.currentTarget;
+            if (target && 'setPointerCapture' in target) {
+                try {
+                    target.setPointerCapture(e.pointerId);
+                } catch (err) {
+                    // Ignore capture errors
+                }
+            }
+            
+            // Focus the editor for immediate input
+            editorRef.current?.focus();
+            
+            // Set cursor position at the pointer location
+            try {
+                const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+                if (range) {
+                    const selection = window.getSelection();
+                    if (selection) {
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    }
+                }
+            } catch (err) {
+                // Ignore cursor positioning errors
+            }
+        }
+    }, [handleStylusDetection]);
+
+    const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        // Handle pen/stylus writing while moving
+        if (e.pointerType === 'pen' && e.pressure > 0) {
+            // Ensure the editor maintains focus during stylus movement
+            if (document.activeElement !== editorRef.current) {
+                editorRef.current?.focus();
+            }
+        }
+    }, []);
+
+    const handlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (e.pointerType === 'pen') {
+            // Release pointer capture
+            const target = e.currentTarget;
+            if (target && 'releasePointerCapture' in target) {
+                try {
+                    target.releasePointerCapture(e.pointerId);
+                } catch (err) {
+                    // Ignore if capture was already released
+                }
+            }
+            
+            // Save content after stylus input
+            if (editorRef.current) {
+                setContent(editorRef.current.innerHTML, true);
+            }
+        }
+    }, [setContent]);
+
+    // Enhanced touch support for stylus detection
+    const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+        if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            
+            // Enhanced stylus detection via touch properties
+            const isPossiblyStylus = 
+                (touch.force !== undefined && touch.force > 0.3) ||
+                (touch.radiusX !== undefined && touch.radiusX < 15) ||
+                (touch.radiusY !== undefined && touch.radiusY < 15) ||
+                // Some stylus have very precise touch points
+                (touch.radiusX === undefined && touch.radiusY === undefined);
+            
+            if (isPossiblyStylus && !isStylusDetected) {
+                handleStylusDetection();
+            }
+            
+            // Focus the editor and position cursor
+            editorRef.current?.focus();
+            
+            try {
+                const range = document.caretRangeFromPoint(touch.clientX, touch.clientY);
+                if (range) {
+                    const selection = window.getSelection();
+                    if (selection) {
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    }
+                }
+            } catch (err) {
+                // Ignore cursor positioning errors
+            }
+        }
+    }, [isStylusDetected, handleStylusDetection]);
 
     const handleExecCommand = useCallback((command: string, value?: string) => {
         editorRef.current?.focus();
@@ -396,8 +513,20 @@ const StudioPanel: React.FC<StudioPanelProps> = ({ state, initialNotes, nodeName
                     ref={editorRef}
                     contentEditable={true}
                     onInput={handleInput}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onTouchStart={handleTouchStart}
                     suppressContentEditableWarning={true}
                     className="w-full h-full bg-transparent text-gray-200 outline-none resize-none leading-relaxed prose prose-invert prose-sm max-w-none"
+                    style={{
+                        touchAction: 'manipulation', // Allow basic touch but prevent zoom/scroll during writing
+                        WebkitUserSelect: 'text',
+                        userSelect: 'text',
+                        // Improve stylus writing experience on Android
+                        WebkitTapHighlightColor: 'transparent', // Remove tap highlight
+                        WebkitTouchCallout: 'none', // Disable callout on long press
+                    }}
                 />
             </div>
 
