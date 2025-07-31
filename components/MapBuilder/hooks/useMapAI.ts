@@ -1,6 +1,6 @@
 
 import { useState, useCallback } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
+import OpenAI from 'openai';
 import * as citationService from '../../../services/citationService';
 import type { MapNode, MapLink, Citation, FormalizationResult, LogicalConstruct, DefinitionAnalysisState, DefinitionResult, CounterExampleResult } from '../../../types';
 import { MapBuilderProps, LogicalWorkbenchState, KeyVoice, Counterargument, AnalysisResult } from '../types';
@@ -8,7 +8,7 @@ import { getMidpoint } from '../utils/calculations';
 import * as nebulaService from '../../../services/nebulaService';
 
 interface UseMapAIProps extends Pick<MapBuilderProps, 'layout' | 'setLayout' | 'logActivity'> {
-    ai: GoogleGenAI;
+    ai: OpenAI;
     nodeMap: Map<string | number, MapNode>;
     clearSelections: () => void;
 }
@@ -32,8 +32,8 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
 
         setLayout(prev => ({ ...prev, links: prev.links.map(l => (l.source === link.source && l.target === link.target) ? { ...l, justificationState: 'loading' } : l) }));
 
-        const model = 'gemini-2.5-flash';
-        const systemInstruction = 'You are a philosophy expert. Your explanations must be directly grounded in the provided source texts. You must cite your claims. Respond ONLY with a JSON object.';
+        const model = 'nvidia-model';
+        const systemInstruction = 'You are a philosophy expert. Your explanations must be directly grounded in the provided source texts. You must cite your claims. Respond ONLY with a JSON object with the following schema: { "justificationText": string, "citations": { "sourceId": string, "citedText": string }[] }.';
         
         const relevantArticles = citationService.findRelevantArticles([sourceNode.name, targetNode.name]);
         const contextString = relevantArticles.length > 0
@@ -47,34 +47,18 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         If no relevant sources are provided or you cannot ground the justification in them, generate a justification from general knowledge and return an empty citations array.`;
 
         try {
-            const response = await ai.models.generateContent({
+            const response = await ai.chat.completions.create({
                 model,
-                contents: prompt,
-                config: {
-                    systemInstruction,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            justificationText: { type: Type.STRING },
-                            citations: {
-                                type: Type.ARRAY,
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        sourceId: { type: Type.STRING },
-                                        citedText: { type: Type.STRING }
-                                    },
-                                    required: ["sourceId", "citedText"]
-                                }
-                            }
-                        },
-                        required: ["justificationText", "citations"]
-                    }
-                }
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024,
             });
 
-            const result = JSON.parse(response.text);
+            const rawResponse = response.choices[0].message.content;
+            const result = JSON.parse(rawResponse);
             if (!result.justificationText) throw new Error("Empty justification from AI.");
 
             const fullCitations: Citation[] = result.citations.map((c: any) => {
@@ -97,7 +81,7 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
                 targetName: targetNode.name,
                 relationships: link.relationshipTypes,
                 justification: newJustification,
-                provenance: { prompt, systemInstruction, rawResponse: response.text, model }
+                provenance: { prompt, systemInstruction, rawResponse, model }
             });
 
             setLayout(prev => ({ ...prev, links: prev.links.map(l => (l.source === link.source && l.target === link.target) ? { ...l, justificationState: 'success', justification: newJustification } : l) }));
@@ -116,8 +100,8 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         const selectedNodes = Array.from(regionSelectedNodeIds).map(id => nodeMap.get(id)).filter((n): n is MapNode => !!n);
         const selectedLinks = links.filter(l => regionSelectedNodeIds.has(l.source) && regionSelectedNodeIds.has(l.target));
 
-        const model = 'gemini-2.5-flash';
-        const systemInstruction = "You are an expert philosophical analyst and synthesizer. Your primary task is to judge the coherence of a set of concepts. If they are coherent, your secondary task is to synthesize a new concept from them. Respond ONLY with a JSON object matching the specified schema.";
+        const model = 'nvidia-model';
+        const systemInstruction = "You are an expert philosophical analyst and synthesizer. Your primary task is to judge the coherence of a set of concepts. If they are coherent, your secondary task is to synthesize a new concept from them. Respond ONLY with a JSON object matching the specified schema: { isCoherent: boolean, coherenceJustification: string, emergentConceptName?: string, synthesis?: string, reasoning?: string }";
         const prompt = `
         You will be given a cluster of philosophical concepts. First, assess if these concepts are conceptually coherent enough to form a meaningful, non-trivial higher-order philosophical theme. They are not coherent if they are too disparate (e.g., 'Free Will', 'Photosynthesis', 'Jazz').
 
@@ -135,27 +119,18 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         `;
 
         try {
-            const response = await ai.models.generateContent({
+            const response = await ai.chat.completions.create({
                 model,
-                contents: prompt,
-                config: {
-                    systemInstruction,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            isCoherent: { type: Type.BOOLEAN, description: "Whether the concepts form a meaningful philosophical cluster." },
-                            coherenceJustification: { type: Type.STRING, description: "A brief explanation of why the cluster is or is not coherent." },
-                            emergentConceptName: { type: Type.STRING, description: "Optional: A concise name for the new, synthesized concept (3-5 words max)." },
-                            synthesis: { type: Type.STRING, description: "Optional: A one-paragraph explanation of the emergent concept." },
-                            reasoning: { type: Type.STRING, description: "Optional: A short, bulleted markdown list explaining how the provided concepts and links support the synthesis." }
-                        },
-                        required: ["isCoherent", "coherenceJustification"]
-                    }
-                }
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024,
             });
 
-            const result = JSON.parse(response.text);
+            const rawResponse = response.choices[0].message.content;
+            const result = JSON.parse(rawResponse);
 
             if (!result.isCoherent) {
                 alert(`Synthesis Failed: ${result.coherenceJustification}`);
@@ -195,7 +170,7 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
                     provenance: {
                         prompt: `Synthesize a theme from the following concepts: ${selectedNodes.map(n => n.name).join(', ')}`,
                         systemInstruction,
-                        rawResponse: response.text,
+                        rawResponse,
                         model
                     }
                 });
@@ -227,7 +202,7 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
             links: prev.links.map(l => (l.source === link.source && l.target === link.target) ? {...l, implicationsState: 'loading'} : l)
         }));
         
-        const model = 'gemini-2.5-flash';
+        const model = 'nvidia-model';
         const systemInstruction = "You are a creative philosophical research assistant. Your task is to brainstorm provocative questions based on user-provided connections. Respond only with a JSON array of strings.";
         const prompt = `A user has created a philosophical link between "${sourceNode.name}" and "${targetNode.name}", labeling the connection as: ${link.relationshipTypes.join(', ')}.
         Based on this user-defined connection, generate exactly three interesting, non-obvious, and open-ended philosophical questions or research avenues that this link might inspire.
@@ -235,19 +210,18 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         Respond ONLY with a JSON array of three strings.`;
 
         try {
-            const response = await ai.models.generateContent({
+            const response = await ai.chat.completions.create({
                 model,
-                contents: prompt,
-                config: {
-                    systemInstruction,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING }
-                    }
-                }
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024,
             });
             
+            const rawResponse = response.choices[0].message.content;
+
             logActivity('EXPLORE_IMPLICATIONS', {
                 sourceName: sourceNode.name,
                 targetName: targetNode.name,
@@ -255,12 +229,12 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
                 provenance: {
                     prompt,
                     systemInstruction,
-                    rawResponse: response.text,
+                    rawResponse,
                     model
                 }
             });
 
-            const questions = JSON.parse(response.text);
+            const questions = JSON.parse(rawResponse);
             if (!Array.isArray(questions) || questions.length === 0) {
                 throw new Error("AI returned no questions.");
             }
@@ -284,43 +258,22 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
 
         setIsAnalyzingGenealogy(nodeId);
         
-        const model = 'gemini-2.5-flash';
-        const systemInstruction = "You are an expert in the history of philosophy. Your task is to identify key historical figures and concepts related to a given philosophical topic. Provide factual, verifiable information. Respond with JSON.";
+        const model = 'nvidia-model';
+        const systemInstruction = "You are an expert in the history of philosophy. Your task is to identify key historical figures and concepts related to a given philosophical topic. Provide factual, verifiable information. Respond with JSON with the following schema: { precursors: { name: string, summary: string }[], successors: { name: string, summary: string }[] }.";
         const prompt = `For the philosophical concept "${sourceNode.name}", identify up to 3 key historical precursors (concepts or figures that came before and influenced it) and up to 3 key figures who significantly developed or critiqued it after its formulation. For each entry, provide the name and a one-sentence summary of their contribution or connection. Respond ONLY with a JSON object.`;
 
         try {
-            const response = await ai.models.generateContent({
+            const response = await ai.chat.completions.create({
                 model,
-                contents: prompt,
-                config: {
-                    systemInstruction,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            precursors: {
-                                type: Type.ARRAY,
-                                description: "Historical figures or concepts that came before and influenced the topic.",
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: { name: { type: Type.STRING }, summary: { type: Type.STRING } },
-                                    required: ["name", "summary"]
-                                }
-                            },
-                            successors: {
-                                type: Type.ARRAY,
-                                description: "Key figures who significantly developed or critiqued the topic.",
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: { name: { type: Type.STRING }, summary: { type: Type.STRING } },
-                                    required: ["name", "summary"]
-                                }
-                            }
-                        },
-                        required: ["precursors", "successors"]
-                    }
-                }
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024,
             });
+
+            const rawResponse = response.choices[0].message.content;
             
             logActivity('ANALYZE_GENEALOGY', {
                 conceptName: sourceNode.name,
@@ -328,12 +281,12 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
                 provenance: {
                     prompt,
                     systemInstruction,
-                    rawResponse: response.text,
+                    rawResponse,
                     model
                 }
             });
 
-            const result = JSON.parse(response.text);
+            const result = JSON.parse(rawResponse);
             const { precursors, successors } = result;
 
             const newNodes: MapNode[] = [];
@@ -393,8 +346,8 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         setIsAnalyzingArgument(true);
         setAnalysisResult(null);
 
-        const model = 'gemini-2.5-flash';
-        const systemInstruction = "You are a philosophical analyst. Your task is to provide structured dialectical analysis of user-defined arguments. Adhere strictly to the JSON output format.";
+        const model = 'nvidia-model';
+        const systemInstruction = "You are a philosophical analyst. Your task is to provide structured dialectical analysis of user-defined arguments. Adhere strictly to the JSON output format: { counterarguments: { title: string, description: string }[], keyVoices: { proponents: { name: string, relevance: string }[], opponents: { name: string, relevance: string }[] } }.";
         const prompt = `A philosophical argument is defined by a link: "${sourceNode.name}" is connected to "${targetNode.name}" with the relationship type(s) "${link.relationshipTypes.join(', ')}".
         Your task is to perform a dialectical analysis of this argument.
         1. **Counterarguments**: Generate up to 3 common or powerful abstract counterarguments. For each, provide a short, memorable title (3-5 words max) and a one-sentence description.
@@ -402,54 +355,17 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         Respond ONLY with a JSON object.`;
 
         try {
-            const response = await ai.models.generateContent({
+            const response = await ai.chat.completions.create({
                 model,
-                contents: prompt,
-                config: {
-                    systemInstruction,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            counterarguments: {
-                                type: Type.ARRAY,
-                                description: "Abstract counterarguments against the user's defined link, each with a title and description.",
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        title: { type: Type.STRING, description: "A short, 3-5 word title for the counterargument." },
-                                        description: { type: Type.STRING, description: "A one-sentence description of the counterargument." }
-                                    },
-                                    required: ["title", "description"]
-                                }
-                            },
-                            keyVoices: {
-                                type: Type.OBJECT,
-                                description: "Key philosophical figures relevant to the argument.",
-                                properties: {
-                                    proponents: {
-                                        type: Type.ARRAY,
-                                        items: {
-                                            type: Type.OBJECT,
-                                            properties: { name: { type: Type.STRING }, relevance: { type: Type.STRING } },
-                                            required: ["name", "relevance"]
-                                        }
-                                    },
-                                    opponents: {
-                                        type: Type.ARRAY,
-                                        items: {
-                                            type: Type.OBJECT,
-                                            properties: { name: { type: Type.STRING }, relevance: { type: Type.STRING } },
-                                            required: ["name", "relevance"]
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        required: ["counterarguments", "keyVoices"]
-                    }
-                }
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024,
             });
+
+            const rawResponse = response.choices[0].message.content;
             
             logActivity('ANALYZE_ARGUMENT', {
                 sourceName: sourceNode.name,
@@ -458,12 +374,12 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
                 provenance: {
                     prompt,
                     systemInstruction,
-                    rawResponse: response.text,
+                    rawResponse,
                     model
                 }
             });
 
-            const result = JSON.parse(response.text);
+            const result = JSON.parse(rawResponse);
             setAnalysisResult(result);
 
         } catch (error) {
@@ -541,8 +457,8 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         let logPayloadBase: any;
         let prompt: string;
         
-        const model = 'gemini-2.5-flash';
-        const systemInstruction = "You are a logician and philosophical analyst. Your task is to deconstruct arguments into their formal components, offering multiple valid interpretations. Adhere strictly to the requested JSON output format.";
+        const model = 'nvidia-model';
+        const systemInstruction = "You are a logician and philosophical analyst. Your task is to deconstruct arguments into their formal components, offering multiple valid interpretations. Adhere strictly to the requested JSON output format: { propositions: { variable: string, meaning: string }[], choices: { formalRepresentation: string, suggestedSystem: string, rationale: string }[], critique: string }.";
 
         if (workbenchState.link) {
             const { link } = workbenchState;
@@ -581,61 +497,29 @@ export const useMapAI = ({ ai, layout, setLayout, logActivity, nodeMap, clearSel
         Respond ONLY with a JSON object that strictly follows the specified schema.`;
 
         try {
-            const response = await ai.models.generateContent({
+            const response = await ai.chat.completions.create({
                 model,
-                contents: fullPrompt,
-                config: {
-                    systemInstruction,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            propositions: {
-                                type: Type.ARRAY,
-                                description: "An array of objects, each mapping a propositional variable to its natural language meaning.",
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        variable: { type: Type.STRING, description: "The propositional variable (e.g., 'P')." },
-                                        meaning: { type: Type.STRING, description: "The natural language proposition." }
-                                    },
-                                    required: ["variable", "meaning"]
-                                }
-                            },
-                            choices: {
-                                type: Type.ARRAY,
-                                description: "An array of distinct formalization options for the argument.",
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        formalRepresentation: { type: Type.STRING },
-                                        suggestedSystem: { type: Type.STRING },
-                                        rationale: { type: Type.STRING }
-                                    },
-                                    required: ["formalRepresentation", "suggestedSystem", "rationale"]
-                                }
-                            },
-                            critique: {
-                                type: Type.STRING,
-                                description: "A single, overarching analysis of the argument's logical structure."
-                            }
-                        },
-                        required: ["propositions", "choices", "critique"]
-                    }
-                }
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: fullPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024,
             });
+
+            const rawResponse = response.choices[0].message.content;
             
             logActivity('FORMALIZE_ARGUMENT', {
                 ...logPayloadBase,
                 provenance: {
                     prompt: fullPrompt,
                     systemInstruction,
-                    rawResponse: response.text,
+                    rawResponse,
                     model
                 }
             });
 
-            const result = JSON.parse(response.text) as FormalizationResult;
+            const result = JSON.parse(rawResponse) as FormalizationResult;
             setFormalizationResult(result);
             
             if (workbenchState.link) {

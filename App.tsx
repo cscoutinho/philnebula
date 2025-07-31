@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from "openai";
 import { parseMarkdown, flattenData } from './services/dataParser';
 import { D3Node, D3Link, Publication, CustomRelationshipType } from './types';
 import NebulaGraph from './components/NebulaGraph';
@@ -45,7 +45,10 @@ const App: React.FC = () => {
     const [data, setData] = useState<{ nodes: D3Node[], links: D3Link[] } | null>(null);
 
     // AI Instance
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY! }), []);
+    const ai = useMemo(() => new OpenAI({
+        apiKey: process.env.API_KEY,
+        baseURL: 'https://integrate.api.nvidia.com/v1',
+    }), []);
 
     // --- Custom Hooks for State and Logic Management ---
     const {
