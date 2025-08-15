@@ -1,27 +1,22 @@
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import type { KindleNote, ImportedNoteSource } from '../../types';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import type { KindleNote, ImportedNoteSource, PublicationType } from '../../types';
 import * as notesParser from '../../services/notesParser';
-import { ChevronLeft, BookOpenIcon, UploadCloudIcon, Trash2, Edit, Check, X, Square, CheckSquare, RefreshCw } from '../icons';
+import { ChevronLeft, BookOpenIcon, UploadCloudIcon, Trash2, Edit, Check, X, Square, CheckSquare, RefreshCw, BookTextIcon, FileTextIcon, GraduationCapIcon } from '../icons';
+
+type PendingSource = Omit<ImportedNoteSource, 'id' | 'notes'> & { notes: Omit<KindleNote, 'sourceId'>[] };
 
 interface NotesInboxProps {
     isOpen: boolean;
     onClose: () => void;
     importedNoteSources: ImportedNoteSource[];
     processedNoteIds: Set<string>;
-    onImportNotes: (data: { bookTitle: string; author: string; notes: Omit<KindleNote, 'sourceId'>[] }) => void;
+    onImportNotes: (data: PendingSource) => void;
     onDeleteSource: (sourceId: string) => void;
     onUpdateSourceMetadata: (sourceId: string, newTitle: string, newAuthor: string) => void;
     onMarkNotesAsProcessed: (noteIds: string[]) => void;
 }
 
-
-const highlightColorClasses: { [key: string]: string } = {
-    yellow: 'bg-yellow-400/20 text-yellow-300 ring-yellow-400/30',
-    blue: 'bg-blue-400/20 text-blue-300 ring-blue-400/30',
-    pink: 'bg-pink-400/20 text-pink-300 ring-pink-400/30',
-    orange: 'bg-orange-400/20 text-orange-300 ring-orange-400/30',
-};
 
 const NoteCard: React.FC<{ 
     note: KindleNote; 
@@ -29,7 +24,6 @@ const NoteCard: React.FC<{
     isSelected: boolean;
     onToggleSelect: () => void;
 }> = ({ note, isProcessed, isSelected, onToggleSelect }) => {
-    const colorClass = note.color ? highlightColorClasses[note.color] || 'bg-gray-400/20 text-gray-300 ring-gray-400/30' : 'bg-gray-400/20 text-gray-300 ring-gray-400/30';
 
     const handleDragStart = (e: React.DragEvent<HTMLLIElement>, note: KindleNote) => {
         e.dataTransfer.setData('application/x-kindle-note', JSON.stringify(note));
@@ -55,9 +49,7 @@ const NoteCard: React.FC<{
                 <p className="text-sm text-gray-200">{note.text}</p>
                 <div className="text-xs text-gray-500 mt-2 flex justify-between items-center">
                     <span className="truncate pr-2">{note.heading}</span>
-                    {note.type === 'highlight' ? (
-                        note.color && <div className={`px-1.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset ${colorClass}`}>{note.color}</div>
-                    ) : (
+                    {note.type === 'note' && (
                         <div className="px-1.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset bg-gray-600 text-gray-200 ring-gray-500">Note</div>
                     )}
                 </div>
@@ -66,31 +58,46 @@ const NoteCard: React.FC<{
     );
 };
 
-type PendingImport = { bookTitle: string; author: string; notes: Omit<KindleNote, 'sourceId'>[] };
-
 const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSources, processedNoteIds, onImportNotes, onDeleteSource, onUpdateSourceMetadata, onMarkNotesAsProcessed }) => {
+    const [view, setView] = useState<'list' | 'selectType' | 'uploadWithDoi' | 'confirm'>('list');
+    const [importType, setImportType] = useState<PublicationType | null>(null);
+    const [pendingImport, setPendingImport] = useState<PendingSource | null>(null);
+    const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
+    const [doi, setDoi] = useState('');
+    
     const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
     const [editingSource, setEditingSource] = useState<{ id: string; title: string; author: string } | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
     const [showProcessed, setShowProcessed] = useState(true);
-    const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const resetImportState = useCallback(() => {
+        setView('list');
+        setImportType(null);
+        setPendingImport(null);
+        setIsFetchingMetadata(false);
+        setDoi('');
+    }, []);
 
     useEffect(() => {
         if (!isOpen) {
+            resetImportState();
             setSelectedSourceId(null);
-            setEditingSource(null);
-            setSearchQuery('');
-            setSelectedNoteIds(new Set());
-            setPendingImport(null);
+        } else {
+             // Reset to list view when opening, but keep selected source if any
+            setView('list');
         }
-    }, [isOpen]);
+    }, [isOpen, resetImportState]);
     
     useEffect(() => {
+        if(selectedSourceId) {
+            setView('list');
+        }
         setSelectedNoteIds(new Set());
     }, [selectedSourceId, showProcessed, searchQuery]);
-
+    
     const selectedSource = useMemo(() => {
         return importedNoteSources.find(s => s.id === selectedSourceId);
     }, [selectedSourceId, importedNoteSources]);
@@ -111,6 +118,99 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
         return notes;
     }, [selectedSource, showProcessed, processedNoteIds, searchQuery]);
     
+    const fetchMetadata = useCallback(async (parsedData: { title: string, author: string, notes: Omit<KindleNote, 'sourceId'>[] }, publicationType: PublicationType, doiValue?: string) => {
+        setIsFetchingMetadata(true);
+        let metadata: Partial<ImportedNoteSource> = {};
+
+        try {
+            if (publicationType === 'book') {
+                const query = `intitle:"${encodeURIComponent(parsedData.title)}" inauthor:"${encodeURIComponent(parsedData.author)}"`;
+                const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${query}&maxResults=1`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.items && data.items.length > 0) {
+                        const book = data.items[0].volumeInfo;
+                        metadata.coverImageUrl = book.imageLinks?.thumbnail;
+                        metadata.description = book.description;
+                        metadata.title = book.title;
+                        metadata.author = book.authors?.join(', ');
+                    }
+                }
+            } else if ((publicationType === 'article' || publicationType === 'chapter') && doiValue) {
+                const response = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doiValue)}`);
+                 if (response.ok) {
+                    const data = await response.json();
+                    const item = data.message;
+                    metadata.title = item.title?.[0] || parsedData.title;
+                    metadata.author = item.author?.map((a: any) => `${a.given} ${a.family}`).join(', ') || parsedData.author;
+                    metadata.journalTitle = item['container-title']?.[0];
+                    if (item.issued && item.issued['date-parts']?.[0]) {
+                        metadata.publicationDate = item.issued['date-parts'][0].join('-');
+                    }
+                    metadata.publisher = item.publisher;
+                    metadata.volume = item.volume;
+                    metadata.issue = item.issue;
+                    metadata.pages = item.page;
+                    metadata.description = item.abstract?.replace(/<[^>]+>/g, ''); // Strip HTML tags from abstract
+                    metadata.doi = doiValue;
+                }
+            }
+        } catch (error) {
+            console.error("Metadata fetch failed:", error);
+        }
+        
+        setPendingImport({
+            publicationType: publicationType,
+            title: metadata.title || parsedData.title,
+            author: metadata.author || parsedData.author,
+            notes: parsedData.notes,
+            ...metadata
+        });
+
+        setIsFetchingMetadata(false);
+        setView('confirm');
+    }, []);
+
+    const handleFileSelected = (file: File, publicationType: PublicationType, doiValue?: string) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const htmlString = event.target?.result as string;
+            try {
+                const parsedData = notesParser.parseKindleHTML(htmlString);
+                fetchMetadata(parsedData, publicationType, doiValue);
+            } catch (error) {
+                alert(`Failed to parse notes file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                resetImportState();
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file && importType) {
+            handleFileSelected(file, importType);
+        }
+        e.target.value = '';
+    };
+
+    const handleDoiUploadSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const file = (e.currentTarget.elements.namedItem('file-input') as HTMLInputElement).files?.[0];
+        if (file && importType) {
+            handleFileSelected(file, importType, doi);
+        } else {
+            alert("Please select a file.");
+        }
+    };
+
+    const handleConfirmImport = () => {
+        if (pendingImport) {
+            onImportNotes(pendingImport);
+            resetImportState();
+        }
+    };
+
     const handleToggleSelect = (noteId: string) => {
         setSelectedNoteIds(prev => {
             const newSet = new Set(prev);
@@ -140,64 +240,126 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
         setSelectedNoteIds(new Set());
     };
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const htmlString = event.target?.result as string;
-            try {
-                const parsedData = notesParser.parseKindleHTML(htmlString);
-                setPendingImport(parsedData);
-            } catch (error) {
-                alert(`Failed to parse notes file. Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            }
-        };
-        reader.readAsText(file);
-        e.target.value = ''; // Reset file input
-    };
-
-    const handleConfirmImport = () => {
-        if (pendingImport) {
-            onImportNotes(pendingImport);
-            setPendingImport(null);
-        }
-    };
-
     const handleSaveMetadata = () => {
         if (editingSource) {
             onUpdateSourceMetadata(editingSource.id, editingSource.title.trim(), editingSource.author.trim());
             setEditingSource(null);
         }
     };
+    
+    const PublicationIcon = ({ type }: { type: PublicationType }) => {
+        switch (type) {
+            case 'book': return <BookOpenIcon className="w-6 h-6 text-gray-500" />;
+            case 'article': return <FileTextIcon className="w-6 h-6 text-gray-500" />;
+            case 'chapter': return <BookTextIcon className="w-6 h-6 text-gray-500" />;
+            case 'thesis': return <GraduationCapIcon className="w-6 h-6 text-gray-500" />;
+            default: return <FileTextIcon className="w-6 h-6 text-gray-500" />;
+        }
+    };
 
-    const renderImportConfirmation = () => {
+    const renderSelectType = () => (
+        <div className="flex flex-col flex-grow p-4 space-y-4">
+            <button onClick={() => setView('list')} className="flex items-center gap-1 text-sm text-cyan-400 hover:text-cyan-200 self-start">
+                <ChevronLeft className="w-4 h-4" /> Back to Sources
+            </button>
+            <h4 className="font-bold text-white">Select Publication Type</h4>
+            <div className="grid grid-cols-2 gap-3">
+                {(['book', 'article', 'chapter', 'thesis'] as PublicationType[]).map(type => (
+                    <button
+                        key={type}
+                        onClick={() => {
+                            setImportType(type);
+                            if (type === 'book' || type === 'thesis') {
+                                fileInputRef.current?.click();
+                            } else {
+                                setView('uploadWithDoi');
+                            }
+                        }}
+                        className="flex flex-col items-center justify-center p-4 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors space-y-2"
+                    >
+                        <PublicationIcon type={type} />
+                        <span className="capitalize text-sm">{type.replace(/_/g, ' ')}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+    
+    const renderUploadWithDoi = () => (
+        <div className="flex flex-col flex-grow p-4 space-y-4">
+             <button onClick={() => setView('selectType')} className="flex items-center gap-1 text-sm text-cyan-400 hover:text-cyan-200 self-start">
+                <ChevronLeft className="w-4 h-4" /> Back to Type Selection
+            </button>
+            <h4 className="font-bold text-white capitalize">{importType} Import</h4>
+            <form onSubmit={handleDoiUploadSubmit} className="space-y-4">
+                <div>
+                    <label htmlFor="doi-input" className="block text-sm font-medium text-gray-300 mb-1">DOI</label>
+                    <input id="doi-input" type="text" value={doi} onChange={e => setDoi(e.target.value)} required placeholder="e.g., 10.1007/s13347-017-0275-z" className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" />
+                </div>
+                 <div>
+                    <label htmlFor="file-input" className="block text-sm font-medium text-gray-300 mb-1">Notes File (.html)</label>
+                    <input id="file-input" name="file-input" type="file" accept=".html" required className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-cyan-600 file:text-white hover:file:bg-cyan-700" />
+                </div>
+                 <button type="submit" className="w-full px-4 py-2 bg-cyan-600 text-white font-bold rounded-md hover:bg-cyan-700 transition-colors">
+                    Upload & Fetch Metadata
+                </button>
+            </form>
+        </div>
+    );
+
+    const renderConfirm = () => {
         if (!pendingImport) return null;
         return (
-             <div className="flex flex-col flex-grow p-4 space-y-4">
-                <button onClick={() => setPendingImport(null)} className="flex items-center gap-1 text-sm text-cyan-400 hover:text-cyan-200 self-start">
-                    <ChevronLeft className="w-4 h-4" /> Cancel Import
+             <div className="flex flex-col flex-grow p-4 space-y-3 overflow-y-auto">
+                <button onClick={resetImportState} className="flex items-center gap-1 text-sm text-cyan-400 hover:text-cyan-200 self-start">
+                    <ChevronLeft className="w-4 h-4" /> Cancel
                 </button>
                 <h4 className="font-bold text-white text-lg">Confirm Import</h4>
-                <p className="text-sm text-gray-400">Please confirm or edit the details for this note source.</p>
-                
-                <div>
-                    <label htmlFor="import-title" className="block text-xs font-medium text-gray-300 mb-1">Book Title</label>
-                    <input id="import-title" type="text" value={pendingImport.bookTitle} onChange={e => setPendingImport(p => p ? {...p, bookTitle: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" />
-                </div>
-                <div>
-                    <label htmlFor="import-author" className="block text-xs font-medium text-gray-300 mb-1">Author</label>
-                    <input id="import-author" type="text" value={pendingImport.author} onChange={e => setPendingImport(p => p ? {...p, author: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" />
-                </div>
-                
-                <div className="text-sm text-gray-400">
-                    <span className="font-semibold">{pendingImport.notes.length}</span> notes found.
-                </div>
-                
-                <button onClick={handleConfirmImport} className="w-full px-4 py-2 bg-cyan-600 text-white font-bold rounded-md hover:bg-cyan-700 transition-colors">
-                    Add Source
-                </button>
+                 {isFetchingMetadata ? (
+                    <div className="flex-grow flex items-center justify-center text-gray-400"><RefreshCw className="w-6 h-6 animate-spin mr-2"/> Fetching metadata...</div>
+                 ) : (
+                    <>
+                        <div className="flex gap-4">
+                            {pendingImport.publicationType === 'book' && (
+                                <div className="w-1/3 flex-shrink-0">
+                                {pendingImport.coverImageUrl ? (
+                                    <img src={pendingImport.coverImageUrl} alt="Book cover" className="w-full object-cover rounded shadow-lg" />
+                                ) : (
+                                    <div className="w-full aspect-[2/3] bg-gray-700 rounded flex items-center justify-center">
+                                        <BookOpenIcon className="w-10 h-10 text-gray-500" />
+                                    </div>
+                                )}
+                                </div>
+                            )}
+                            <div className="flex-grow space-y-3">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-300 mb-1">Title</label>
+                                    <input type="text" value={pendingImport.title} onChange={e => setPendingImport(p => p ? {...p, title: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-300 mb-1">Author(s)</label>
+                                    <input type="text" value={pendingImport.author} onChange={e => setPendingImport(p => p ? {...p, author: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" />
+                                </div>
+                            </div>
+                        </div>
+                        {pendingImport.description && (
+                            <div className="text-sm text-gray-400">
+                                <p className="text-xs font-medium text-gray-300 mb-1">{pendingImport.publicationType === 'book' ? 'Synopsis' : 'Abstract'}</p>
+                                <p className="max-h-24 overflow-y-auto p-2 bg-gray-900/50 rounded text-xs leading-relaxed">{pendingImport.description}</p>
+                            </div>
+                        )}
+                         {pendingImport.journalTitle && <p className="text-xs"><strong className="text-gray-300">Journal:</strong> {pendingImport.journalTitle}</p>}
+                         {pendingImport.publicationDate && <p className="text-xs"><strong className="text-gray-300">Date:</strong> {pendingImport.publicationDate}</p>}
+                        <div className="text-sm text-gray-400">
+                            <span className="font-semibold">{pendingImport.notes.length}</span> notes found.
+                        </div>
+                        <div className="pt-2">
+                             <button onClick={handleConfirmImport} className="w-full px-4 py-2 bg-cyan-600 text-white font-bold rounded-md hover:bg-cyan-700 transition-colors">
+                                Add Source
+                            </button>
+                        </div>
+                    </>
+                 )}
             </div>
         )
     };
@@ -206,18 +368,15 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
         <div className="flex flex-col flex-grow overflow-hidden">
             <div className="p-4 border-b border-gray-700 flex-shrink-0">
                 <h4 className="font-bold text-white mb-2">Note Sources</h4>
-                <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 transition-colors font-semibold text-sm"
-                >
+                <button onClick={() => setView('selectType')} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 transition-colors font-semibold text-sm">
                     <UploadCloudIcon className="w-5 h-5"/>
                     Import New Notes
                 </button>
             </div>
             {importedNoteSources.length > 0 ? (
-                <ul className="flex-grow p-2 space-y-2 overflow-y-auto">
+                <ul className="flex-grow p-2 space-y-1 overflow-y-auto">
                     {importedNoteSources.map(source => (
-                        <li key={source.id} className="group bg-gray-800 rounded-md hover:bg-gray-700/70 transition-colors relative">
+                        <li key={source.id} className="group rounded-md hover:bg-gray-700/70 transition-colors relative">
                             {editingSource?.id === source.id ? (
                                 <div className="p-3 space-y-2">
                                     <input type="text" value={editingSource.title} onChange={e => setEditingSource(es => es ? {...es, title: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="Title"/>
@@ -230,13 +389,22 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                             ) : (
                                 <>
                                     <div className="absolute top-1 right-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                                        <button onClick={() => setEditingSource({id: source.id, title: source.bookTitle, author: source.author})} className="p-1 text-gray-400 hover:text-cyan-400" aria-label="Edit source metadata"><Edit className="w-4 h-4"/></button>
-                                        <button onClick={() => { if(confirm('Are you sure you want to delete this source and all its notes?')) onDeleteSource(source.id)}} className="p-1 text-gray-400 hover:text-red-400" aria-label="Delete source"><Trash2 className="w-4 h-4"/></button>
+                                        <button onClick={() => setEditingSource({id: source.id, title: source.title, author: source.author})} className="p-1 text-gray-400 hover:text-cyan-400" aria-label="Edit source metadata"><Edit className="w-4 h-4"/></button>
+                                        <button onClick={() => { if(confirm('Are you sure you want to delete this source and all its notes?')) {setSelectedSourceId(null); onDeleteSource(source.id)}}} className="p-1 text-gray-400 hover:text-red-400" aria-label="Delete source"><Trash2 className="w-4 h-4"/></button>
                                     </div>
-                                    <button onClick={() => setSelectedSourceId(source.id)} className="w-full text-left p-3">
-                                        <h5 className="font-semibold text-gray-100 truncate pr-12">{source.bookTitle}</h5>
-                                        <p className="text-xs text-gray-400">{source.author}</p>
-                                        <p className="text-xs text-gray-500 mt-1">{source.notes.length} notes</p>
+                                    <button onClick={() => setSelectedSourceId(source.id)} className="w-full text-left p-3 flex items-center gap-3">
+                                        {source.coverImageUrl ? (
+                                            <img src={source.coverImageUrl} alt={`Cover of ${source.title}`} className="w-10 h-14 object-cover rounded flex-shrink-0 shadow-md" />
+                                        ) : (
+                                            <div className="w-10 h-14 bg-gray-700 rounded flex items-center justify-center flex-shrink-0">
+                                                <PublicationIcon type={source.publicationType} />
+                                            </div>
+                                        )}
+                                        <div className="overflow-hidden">
+                                            <h5 className="font-semibold text-gray-100 truncate">{source.title}</h5>
+                                            <p className="text-xs text-gray-400 truncate">{source.author}</p>
+                                            <p className="text-xs text-gray-500 mt-1">{source.notes.length} notes</p>
+                                        </div>
                                     </button>
                                 </>
                             )}
@@ -262,7 +430,7 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                         <ChevronLeft className="w-4 h-4" /> Back to Sources
                     </button>
                     <div>
-                        <h4 className="font-bold text-white truncate">{selectedSource.bookTitle}</h4>
+                        <h4 className="font-bold text-white truncate">{selectedSource.title}</h4>
                         <p className="text-sm text-gray-400">{selectedSource.author}</p>
                     </div>
                      <input
@@ -313,8 +481,12 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
     };
 
     let content;
-    if (pendingImport) {
-        content = renderImportConfirmation();
+    if (view === 'selectType') {
+        content = renderSelectType();
+    } else if (view === 'uploadWithDoi') {
+        content = renderUploadWithDoi();
+    } else if (view === 'confirm' || isFetchingMetadata) {
+        content = renderConfirm();
     } else if (selectedSourceId) {
         content = renderNotesView();
     } else {

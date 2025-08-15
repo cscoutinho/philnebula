@@ -1,7 +1,4 @@
 
-
-
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { parseMarkdown, flattenData } from './services/dataParser';
@@ -369,12 +366,11 @@ const App: React.FC = () => {
     };
     
     // --- Notes Inbox Handlers ---
-    const handleImportNotes = useCallback((data: { bookTitle: string, author: string, notes: Omit<KindleNote, 'sourceId'>[] }) => {
+    const handleImportNotes = useCallback((data: Omit<ImportedNoteSource, 'id' | 'notes'> & { notes: Omit<KindleNote, 'sourceId'>[] }) => {
         const sourceId = `source_${Date.now()}`;
         const newSource: ImportedNoteSource = {
             id: sourceId,
-            bookTitle: data.bookTitle,
-            author: data.author,
+            ...data,
             notes: data.notes.map(n => ({ ...n, sourceId })),
         };
 
@@ -382,7 +378,7 @@ const App: React.FC = () => {
             ...d,
             importedNoteSources: [...(d.importedNoteSources || []), newSource]
         }));
-        logActivity('IMPORT_NOTES', { bookTitle: data.bookTitle, noteCount: data.notes.length });
+        logActivity('IMPORT_NOTES', { title: data.title, noteCount: data.notes.length });
     }, [updateActiveProjectData, logActivity]);
 
     const handleDeleteNoteSource = useCallback((sourceId: string) => {
@@ -396,7 +392,7 @@ const App: React.FC = () => {
         updateActiveProjectData(d => ({
             ...d,
             importedNoteSources: (d.importedNoteSources || []).map(s => 
-                s.id === sourceId ? { ...s, bookTitle: newTitle, author: newAuthor } : s
+                s.id === sourceId ? { ...s, title: newTitle, author: newAuthor } : s
             )
         }));
     }, [updateActiveProjectData]);
@@ -425,10 +421,10 @@ const App: React.FC = () => {
 
         try {
             const { title, provenance } = await mapBuilderService.synthesizeNoteTitle(ai, note.text);
-            const sourceBook = activeProjectData?.importedNoteSources?.find(s => s.id === note.sourceId);
+            const source = activeProjectData?.importedNoteSources?.find(s => s.id === note.sourceId);
 
             logActivity('ADD_NOTE_TO_MAP', {
-                bookTitle: sourceBook?.bookTitle || 'Unknown Book',
+                title: source?.title || 'Unknown Source',
                 noteText: note.text,
                 synthesizedTitle: title,
                 provenance

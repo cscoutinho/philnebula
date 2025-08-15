@@ -1,9 +1,6 @@
 
-
-
-
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { MultiProjectSession, Project, AppSessionData, MapLink, ProjectActivityType, ProjectActivity } from '../types';
+import { MultiProjectSession, Project, AppSessionData, MapLink, ProjectActivityType, ProjectActivity, ImportedNoteSource } from '../types';
 
 const MULTI_PROJECT_SESSION_VERSION = 10;
 
@@ -40,12 +37,14 @@ const loadInitialSession = (): MultiProjectSession => {
                     // Migration from importedNotes object to importedNoteSources array
                     if (p.data.importedNotes && !Array.isArray(p.data.importedNotes)) {
                         const sourceId = `source_${p.id}_${Date.now()}`;
-                        p.data.importedNoteSources = [{
+                        const newSource: ImportedNoteSource = {
                             id: sourceId,
-                            bookTitle: p.data.importedNotes.bookTitle,
+                            publicationType: 'book', // Assume old data is a book
+                            title: p.data.importedNotes.title, // Use `title` instead of `bookTitle`
                             author: p.data.importedNotes.author,
                             notes: p.data.importedNotes.notes.map(n => ({...n, sourceId})),
-                        }];
+                        };
+                        p.data.importedNoteSources = [newSource];
                         delete p.data.importedNotes;
                     } else if (!p.data.importedNoteSources) {
                         p.data.importedNoteSources = [];

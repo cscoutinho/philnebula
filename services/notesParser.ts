@@ -1,3 +1,4 @@
+
 import { KindleNote } from '../types';
 
 function hashCode(str: string): string {
@@ -10,11 +11,11 @@ function hashCode(str: string): string {
     return hash.toString(16);
 }
 
-export function parseKindleHTML(htmlString: string): { bookTitle: string, author: string, notes: Omit<KindleNote, 'sourceId'>[] } {
+export function parseKindleHTML(htmlString: string): { title: string, author: string, notes: Omit<KindleNote, 'sourceId'>[] } {
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlString, 'text/html');
 
-    const bookTitle = doc.querySelector('.bookTitle')?.textContent?.trim() || 'Untitled';
+    const title = doc.querySelector('.bookTitle')?.textContent?.trim() || 'Untitled';
     const author = doc.querySelector('.authors')?.textContent?.trim() || 'Unknown Author';
 
     const notes: Omit<KindleNote, 'sourceId'>[] = [];
@@ -23,26 +24,22 @@ export function parseKindleHTML(htmlString: string): { bookTitle: string, author
     noteHeadings.forEach(headingEl => {
         const nextEl = headingEl.nextElementSibling;
         if (nextEl && nextEl.classList.contains('noteText')) {
-            const headingText = headingEl.textContent || '';
+            const headingTextContent = headingEl.textContent || '';
+            // Remove color parenthetical, e.g., " (yellow)"
+            const headingText = headingTextContent.replace(/\s\([^)]+\)/, '').trim();
             const noteText = nextEl.textContent || '';
 
             if (noteText.trim()) {
                 const pageMatch = headingText.match(/Página (\d+)/);
                 const page = pageMatch ? parseInt(pageMatch[1], 10) : null;
 
-                const colorSpan = headingEl.querySelector('span[class^="highlight_"]');
-                const colorClass = colorSpan?.className || '';
-                const colorMatch = colorClass.match(/highlight_(\w+)/);
-                const color = colorMatch ? colorMatch[1] : null;
-
-                const type = /nota/i.test(headingText) ? 'note' : 'highlight';
+                const type = /nota/i.test(headingTextContent) ? 'note' : 'highlight';
                 
                 const note: Omit<KindleNote, 'sourceId'> = {
                     id: `${page || 'N'}-${hashCode(noteText.substring(0, 50))}`,
                     heading: headingText,
                     text: noteText,
                     page,
-                    color,
                     type,
                 };
                 notes.push(note);
@@ -50,5 +47,5 @@ export function parseKindleHTML(htmlString: string): { bookTitle: string, author
         }
     });
 
-    return { bookTitle, author, notes };
+    return { title, author, notes };
 }

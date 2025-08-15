@@ -1,7 +1,4 @@
 
-
-
-
 export interface RawNode {
   id: number;
   name: string;
@@ -54,7 +51,6 @@ export interface KindleNote {
   heading: string;
   text: string;
   page: number | null;
-  color: string | null;
   type: 'highlight' | 'note';
   sourceId: string;
 }
@@ -228,11 +224,27 @@ export interface ChallengeSession {
   status: 'generating_suggestions' | 'topic_selection' | 'active' | 'completed' | 'discarded';
 }
 
+export type PublicationType = 'book' | 'article' | 'chapter' | 'thesis';
+
 export interface ImportedNoteSource {
     id: string;
-    bookTitle: string;
+    publicationType: PublicationType;
+    title: string;
     author: string;
     notes: KindleNote[];
+    
+    // Book-specific
+    coverImageUrl?: string;
+    description?: string; // For books: synopsis; for articles: abstract
+    
+    // Academic metadata
+    doi?: string;
+    journalTitle?: string;
+    publicationDate?: string;
+    publisher?: string;
+    volume?: string;
+    issue?: string;
+    pages?: string;
 }
 
 // --- Type for Data Portability ---
@@ -251,7 +263,7 @@ export interface AppSessionData {
     processedNoteIds?: string[];
     // Deprecated, use importedNoteSources instead
     importedNotes?: {
-        bookTitle: string;
+        title: string; // formerly bookTitle
         author: string;
         notes: KindleNote[];
     } | null;
