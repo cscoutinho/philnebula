@@ -1,14 +1,15 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useState } from 'react';
 import { useMapInteraction } from './hooks/useMapInteraction';
 import NodeComponent from './NodeComponent';
 import LinkComponent from './LinkComponent';
 import { LassoIcon, SparkleIcon, FlaskConicalIcon } from '../icons';
-import { MapBuilderProps, RelationshipTypeInfo, MapNode } from '../../types';
+import { MapBuilderProps, RelationshipTypeInfo, MapNode, KindleNote, DropOnNodeMenuState } from '../../types';
 
-interface MapCanvasProps extends Pick<MapBuilderProps, 'layout' | 'setLayout' | 'logActivity' | 'relationshipTypes' | 'allNodes'> {
+interface MapCanvasProps extends Pick<MapBuilderProps, 'layout' | 'setLayout' | 'logActivity' | 'relationshipTypes' | 'allNodes' | 'onAddNoteToMap' | 'onAddMultipleNotesToMap'> {
     relationshipColorMap: Record<string, string>;
     uiState: ReturnType<typeof import('./hooks/useMapUI').useMapUI>;
     aiState: ReturnType<typeof import('./hooks/useMapAI').useMapAI>;
+    setDropOnNodeMenu: (state: DropOnNodeMenuState | null) => void;
 }
 
 const MapCanvas: React.FC<MapCanvasProps> = ({
@@ -19,10 +20,14 @@ const MapCanvas: React.FC<MapCanvasProps> = ({
     relationshipColorMap,
     uiState,
     aiState,
-    allNodes
+    allNodes,
+    onAddNoteToMap,
+    onAddMultipleNotesToMap,
+    setDropOnNodeMenu,
 }) => {
     const { nodes, links, logicalConstructs } = layout;
     const nodeMap = useMemo(() => new Map<string | number, MapNode>(nodes.map(n => [n.id, n])), [nodes]);
+    const [dropTargetNodeId, setDropTargetNodeId] = useState<string | number | null>(null);
 
     const svgRef = useRef<SVGSVGElement>(null);
     
@@ -48,6 +53,11 @@ const MapCanvas: React.FC<MapCanvasProps> = ({
         uiState,
         aiState,
         nodeMap,
+        onAddNoteToMap,
+        onAddMultipleNotesToMap,
+        dropTargetNodeId, 
+        setDropTargetNodeId,
+        setDropOnNodeMenu,
     });
 
     const regionActionPos = useMemo(() => {
@@ -137,6 +147,7 @@ const MapCanvas: React.FC<MapCanvasProps> = ({
                             isRegionSelected={regionSelectedNodeIds.has(node.id)}
                             isAnalyzing={aiState.isAnalyzingGenealogy === node.id}
                             isEditing={uiState.editingNodeId === node.id}
+                            isDropTarget={dropTargetNodeId === node.id}
                             linkingNodeId={linkingNode}
                             onClick={handleNodeClick}
                             onContextMenu={handleNodeContextMenu}

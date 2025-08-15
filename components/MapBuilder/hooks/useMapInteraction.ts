@@ -3,13 +3,16 @@ import { select, pointer } from 'd3-selection';
 import { drag } from 'd3-drag';
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
 import 'd3-transition';
-import type { MapNode, MapLink, MapBuilderProps, LogicalWorkbenchState } from '../../../types';
+import type { MapNode, MapLink, MapBuilderProps, LogicalWorkbenchState, KindleNote, DropOnNodeMenuState } from '../../../types';
 
-interface useMapInteractionProps extends Pick<MapBuilderProps, 'layout' | 'setLayout' | 'logActivity'> {
+interface useMapInteractionProps extends Pick<MapBuilderProps, 'layout' | 'setLayout' | 'logActivity' | 'onAddNoteToMap' | 'onAddMultipleNotesToMap'> {
     svgRef: React.RefObject<SVGSVGElement>;
     uiState: ReturnType<typeof import('./useMapUI').useMapUI>;
     aiState: ReturnType<typeof import('./useMapAI').useMapAI>;
     nodeMap: Map<string | number, MapNode>;
+    dropTargetNodeId: string | number | null;
+    setDropTargetNodeId: (id: string | number | null) => void;
+    setDropOnNodeMenu: (state: DropOnNodeMenuState | null) => void;
 }
 
 export const useMapInteraction = ({
@@ -20,6 +23,11 @@ export const useMapInteraction = ({
     uiState,
     aiState,
     nodeMap,
+    onAddNoteToMap,
+    onAddMultipleNotesToMap,
+    dropTargetNodeId,
+    setDropTargetNodeId,
+    setDropOnNodeMenu,
 }: useMapInteractionProps) => {
     const {
         clearSelections,
@@ -64,7 +72,9 @@ export const useMapInteraction = ({
         setFloatingTooltip(null);
         setEditingNodeId(null);
 
-        if ((node.isAiGenerated || node.isDialectic || node.isHistorical) && node.synthesisInfo) {
+        if (node.sourceNotes && node.sourceNotes.length > 0) {
+            setFloatingTooltip({ x: e.clientX, y: e.clientY, title: `Source Note${node.sourceNotes.length > 1 ? 's' : ''}`, text: node.sourceNotes, type: 'source_note' });
+        } else if ((node.isAiGenerated || node.isDialectic || node.isHistorical) && node.synthesisInfo) {
              setFloatingTooltip({ x: e.clientX, y: e.clientY, title: node.name, text: node.synthesisInfo.synthesis, type: 'synthesis' });
         }
          if (node.isCitation && node.citationData) {
@@ -282,20 +292,56 @@ export const useMapInteraction = ({
 
     const handleDrop = (e: React.DragEvent<SVGSVGElement>) => {
         e.preventDefault();
-        const dataString = e.dataTransfer.getData('application/json');
-        if (!dataString || !svgRef.current) return;
+        const trayNodeData = e.dataTransfer.getData('application/json');
+        const kindleNoteData = e.dataTransfer.getData('application/x-kindle-note');
+        const multipleKindleNotesData = e.dataTransfer.getData('application/x-kindle-notes-multiple');
+        
+        setDropTargetNodeId(null); // Reset drop target on drop
 
-        const droppedNode: { id: number; name: string; } = JSON.parse(dataString);
-        if (nodes.find(n => n.id === droppedNode.id)) return;
+        if (dropTargetNodeId && (kindleNoteData || multipleKindleNotesData)) {
+            const notes = kindleNoteData ? [JSON.parse(kindleNoteData)] : JSON.parse(multipleKindleNotesData);
+            setDropOnNodeMenu({
+                x: e.clientX,
+                y: e.clientY,
+                targetNodeId: dropTargetNodeId,
+                droppedNotes: notes
+            });
+            return; 
+        }
 
-        const { x, y } = getPointInWorldSpace(e);
-
-        setLayout(prev => ({ ...prev, nodes: [...prev.nodes, { id: droppedNode.id, name: droppedNode.name, x, y, shape: 'rect', width: 150, height: 40 }] }));
+        if (kindleNoteData) {
+            const droppedNote: KindleNote = JSON.parse(kindleNoteData);
+            const { x, y } = getPointInWorldSpace(e);
+            onAddNoteToMap(droppedNote, { x, y });
+        } else if (multipleKindleNotesData) {
+            const notes: KindleNote[] = JSON.parse(multipleKindleNotesData);
+            const { x, y } = getPointInWorldSpace(e);
+            onAddMultipleNotesToMap(notes, { x, y });
+        } else if (trayNodeData) {
+            const droppedNode: { id: number; name: string; } = JSON.parse(trayNodeData);
+            if (nodes.find(n => n.id === droppedNode.id)) return;
+            const { x, y } = getPointInWorldSpace(e);
+            setLayout(prev => ({ ...prev, nodes: [...prev.nodes, { id: droppedNode.id, name: droppedNode.name, x, y, shape: 'rect', width: 150, height: 40 }] }));
+        }
     };
 
     const handleDragOver = (e: React.DragEvent<SVGSVGElement>) => {
         e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
+        const isNoteDrag = e.dataTransfer.types.includes('application/x-kindle-note') || e.dataTransfer.types.includes('application/x-kindle-notes-multiple');
+        
+        if (isNoteDrag) {
+            const targetElement = e.target as SVGElement;
+            const nodeG = targetElement.closest('g.map-node');
+            if (nodeG && (nodeG as any).__data__) {
+                const nodeData = (nodeG as any).__data__ as MapNode;
+                setDropTargetNodeId(nodeData.id);
+            } else {
+                setDropTargetNodeId(null);
+            }
+            e.dataTransfer.dropEffect = 'copy';
+        } else {
+            e.dataTransfer.dropEffect = 'move';
+        }
     };
 
     const handleNodeContextMenu = (e: React.MouseEvent, nodeId: number | string) => {

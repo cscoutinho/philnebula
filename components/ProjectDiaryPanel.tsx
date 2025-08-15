@@ -1,6 +1,6 @@
 import React from 'react';
 import { ProjectActivity, ProjectActivityType } from '../types';
-import { ChevronLeft, BrainCircuit, Network, PlusCircle, LinkIcon, RssIcon, SparkleIcon, DiaryIcon, ExternalLinkIcon, ReplaceIcon, HistoryIcon, MessageSquareQuote, ScaleIcon, FlaskConicalIcon, Edit, LightbulbIcon, Check, RefreshCw } from './icons';
+import { ChevronLeft, BrainCircuit, Network, PlusCircle, LinkIcon, RssIcon, SparkleIcon, DiaryIcon, ExternalLinkIcon, ReplaceIcon, HistoryIcon, MessageSquareQuote, ScaleIcon, FlaskConicalIcon, Edit, LightbulbIcon, Check, RefreshCw, BookOpenIcon, StickyNoteIcon } from './icons';
 
 interface ProjectDiaryPanelProps {
     isOpen: boolean;
@@ -47,6 +47,8 @@ const ActivityIcon: React.FC<{ type: ProjectActivity['type'] }> = ({ type }) => 
         case 'START_BELIEF_CHALLENGE': return <LightbulbIcon className="w-4 h-4 text-yellow-400" />;
         case 'BUILD_BELIEF_CHALLENGE_PATH': return <BrainCircuit className="w-4 h-4 text-yellow-500" />;
         case 'COMPLETE_BELIEF_CHALLENGE': return <Check className="w-4 h-4 text-green-400" />;
+        case 'IMPORT_NOTES': return <BookOpenIcon className="w-4 h-4 text-cyan-400" />;
+        case 'ADD_NOTE_TO_MAP': return <StickyNoteIcon className="w-4 h-4 text-yellow-400" />;
         default: return <BrainCircuit className="w-4 h-4 text-gray-400" />;
     }
 };
@@ -98,6 +100,10 @@ const ActivityText: React.FC<{ activity: ProjectActivity }> = ({ activity }) => 
              return <>Built a personalized challenge path with <span className="font-bold text-gray-100">{payload.conceptCount}</span> topics for the belief <span className="italic text-gray-300">"{payload.belief}"</span></>;
         case 'COMPLETE_BELIEF_CHALLENGE':
             return <>Completed belief challenge on <span className="italic text-gray-300">"{payload.belief}"</span>.</>;
+        case 'IMPORT_NOTES':
+            return <>Imported {payload.noteCount} notes from <span className="font-bold text-gray-100">'{payload.bookTitle}'</span>.</>;
+        case 'ADD_NOTE_TO_MAP':
+            return <>Added note as <span className="font-bold text-gray-100">'{payload.synthesizedTitle}'</span> from '{payload.bookTitle}'.</>;
         default:
             return <>{type}</>;
     }

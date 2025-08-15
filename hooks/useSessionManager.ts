@@ -1,9 +1,11 @@
 
 
+
+
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { MultiProjectSession, Project, AppSessionData, MapLink, ProjectActivityType, ProjectActivity } from '../types';
 
-const MULTI_PROJECT_SESSION_VERSION = 8;
+const MULTI_PROJECT_SESSION_VERSION = 10;
 
 const createNewProject = (name: string): Project => {
     return {
@@ -16,6 +18,8 @@ const createNewProject = (name: string): Project => {
             seenPublicationIds: [],
             projectDiary: [],
             beliefFlipChallenges: [],
+            importedNoteSources: [],
+            processedNoteIds: [],
         },
     };
 };
@@ -27,11 +31,27 @@ const loadInitialSession = (): MultiProjectSession => {
             const savedSession: MultiProjectSession = JSON.parse(savedSessionString);
             
             if (!savedSession.version || savedSession.version < MULTI_PROJECT_SESSION_VERSION) {
-                 console.log(`Migrating session to v${MULTI_PROJECT_SESSION_VERSION}...`);
+                 console.log(`Migrating session from v${savedSession.version || 'pre-version'} to v${MULTI_PROJECT_SESSION_VERSION}...`);
                  savedSession.projects.forEach((p: Project) => {
                     if (!p.data.projectDiary) { p.data.projectDiary = []; }
                     if (!p.data.mapLayout.logicalConstructs) { p.data.mapLayout.logicalConstructs = []; }
                     if (!p.data.beliefFlipChallenges) { p.data.beliefFlipChallenges = []; }
+                    
+                    // Migration from importedNotes object to importedNoteSources array
+                    if (p.data.importedNotes && !Array.isArray(p.data.importedNotes)) {
+                        const sourceId = `source_${p.id}_${Date.now()}`;
+                        p.data.importedNoteSources = [{
+                            id: sourceId,
+                            bookTitle: p.data.importedNotes.bookTitle,
+                            author: p.data.importedNotes.author,
+                            notes: p.data.importedNotes.notes.map(n => ({...n, sourceId})),
+                        }];
+                        delete p.data.importedNotes;
+                    } else if (!p.data.importedNoteSources) {
+                        p.data.importedNoteSources = [];
+                    }
+
+                    if (!p.data.processedNoteIds) { p.data.processedNoteIds = []; }
                     if (p.data.mapLayout && p.data.mapLayout.links) {
                         p.data.mapLayout.links = p.data.mapLayout.links.map((link: MapLink) => {
                              let newLink = { ...link };
@@ -44,6 +64,14 @@ const loadInitialSession = (): MultiProjectSession => {
                             }
                             return newLink;
                         });
+                    }
+                    if(p.data.mapLayout && p.data.mapLayout.nodes){
+                        p.data.mapLayout.nodes.forEach((node: any) => {
+                            if (node.sourceNote && !node.sourceNotes) {
+                                node.sourceNotes = [node.sourceNote];
+                                delete node.sourceNote;
+                            }
+                        })
                     }
                  });
                  if (!savedSession.customRelationshipTypes) { savedSession.customRelationshipTypes = []; }
@@ -64,6 +92,8 @@ const loadInitialSession = (): MultiProjectSession => {
                     if (!p.data.projectDiary) { p.data.projectDiary = []; }
                     if (!p.data.mapLayout.logicalConstructs) { p.data.mapLayout.logicalConstructs = []; }
                      if (!p.data.beliefFlipChallenges) { p.data.beliefFlipChallenges = []; }
+                     if (!p.data.importedNoteSources) { p.data.importedNoteSources = []; }
+                    if (!p.data.processedNoteIds) { p.data.processedNoteIds = []; }
                 });
                 
                 if (!savedSession.customRelationshipTypes) { savedSession.customRelationshipTypes = []; }
@@ -104,6 +134,8 @@ const loadInitialSession = (): MultiProjectSession => {
         seenPublicationIds: JSON.parse(localStorage.getItem('seenPublicationIds') || '[]'),
         projectDiary: [],
         beliefFlipChallenges: [],
+        importedNoteSources: [],
+        processedNoteIds: [],
     };
     
     return {

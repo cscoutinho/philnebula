@@ -1,8 +1,11 @@
 
+
+
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { parseMarkdown, flattenData } from './services/dataParser';
-import { D3Node, D3Link, Publication, CustomRelationshipType, MapNode } from './types';
+import { D3Node, D3Link, Publication, CustomRelationshipType, MapNode, KindleNote, ImportedNoteSource } from './types';
 import NebulaGraph from './components/NebulaGraph';
 import InfoPanel from './components/InfoPanel';
 import SearchInput from './components/SearchInput';
@@ -15,12 +18,14 @@ import SettingsModal from './components/SettingsModal';
 import ProjectSwitcher from './components/ProjectSwitcher';
 import ProjectDiaryPanel from './components/ProjectDiaryPanel';
 import BeliefFlipChallenge from './components/BeliefFlipChallenge';
-import { BrainCircuit, SettingsIcon, DiaryIcon, FlaskConicalIcon, LightbulbIcon } from './components/icons';
+import { BrainCircuit, SettingsIcon, DiaryIcon, FlaskConicalIcon, LightbulbIcon, BookOpenIcon } from './components/icons';
 import { useSessionManager } from './hooks/useSessionManager';
 import { useFeedManager } from './hooks/useFeedManager';
 import { useNebula } from './hooks/useNebula';
 import { useBeliefFlipChallenge } from './hooks/useBeliefFlipChallenge';
 import StudioPanel from './components/MapBuilder/Panels/StudioPanel';
+import NotesInbox from './components/NotesInbox';
+import * as mapBuilderService from './services/mapBuilderService';
 
 const defaultRelationshipTypes = [
     // Foundational & Structural
@@ -107,6 +112,7 @@ const App: React.FC = () => {
     const [currentView, setCurrentView] = useState<'nebula' | 'map' | 'feed'>('nebula');
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isDiaryOpen, setIsDiaryOpen] = useState(false);
+    const [isNotesInboxOpen, setIsNotesInboxOpen] = useState(false);
     const [isArgumentStudioOpen, setIsArgumentStudioOpen] = useState(false);
     const [isChallengeOpen, setIsChallengeOpen] = useState(false);
     const [initialWorkbenchData, setInitialWorkbenchData] = useState<any>(null);
@@ -361,6 +367,151 @@ const App: React.FC = () => {
         });
         setCurrentView('map');
     };
+    
+    // --- Notes Inbox Handlers ---
+    const handleImportNotes = useCallback((data: { bookTitle: string, author: string, notes: Omit<KindleNote, 'sourceId'>[] }) => {
+        const sourceId = `source_${Date.now()}`;
+        const newSource: ImportedNoteSource = {
+            id: sourceId,
+            bookTitle: data.bookTitle,
+            author: data.author,
+            notes: data.notes.map(n => ({ ...n, sourceId })),
+        };
+
+        updateActiveProjectData(d => ({
+            ...d,
+            importedNoteSources: [...(d.importedNoteSources || []), newSource]
+        }));
+        logActivity('IMPORT_NOTES', { bookTitle: data.bookTitle, noteCount: data.notes.length });
+    }, [updateActiveProjectData, logActivity]);
+
+    const handleDeleteNoteSource = useCallback((sourceId: string) => {
+        updateActiveProjectData(d => ({
+            ...d,
+            importedNoteSources: (d.importedNoteSources || []).filter(s => s.id !== sourceId)
+        }));
+    }, [updateActiveProjectData]);
+
+    const handleUpdateNoteSourceMetadata = useCallback((sourceId: string, newTitle: string, newAuthor: string) => {
+        updateActiveProjectData(d => ({
+            ...d,
+            importedNoteSources: (d.importedNoteSources || []).map(s => 
+                s.id === sourceId ? { ...s, bookTitle: newTitle, author: newAuthor } : s
+            )
+        }));
+    }, [updateActiveProjectData]);
+
+    const handleMarkNotesAsProcessed = useCallback((noteIds: string[]) => {
+        updateActiveProjectData(d => {
+            const processed = new Set(d.processedNoteIds || []);
+            noteIds.forEach(id => processed.add(id));
+            return { ...d, processedNoteIds: Array.from(processed) };
+        });
+    }, [updateActiveProjectData]);
+    
+    const handleAddNoteToMap = useCallback(async (note: KindleNote, position: { x: number, y: number }) => {
+        const tempId = `temp_${Date.now()}`;
+        const placeholderNode: MapNode = {
+            id: tempId, name: 'Synthesizing...', x: position.x, y: position.y,
+            shape: 'rect', width: 150, height: 40, isAiGenerated: true,
+        };
+
+        updateActiveProjectData(d => ({
+            ...d,
+            mapLayout: { ...d.mapLayout, nodes: [...d.mapLayout.nodes, placeholderNode] }
+        }));
+        
+        handleMarkNotesAsProcessed([note.id]);
+
+        try {
+            const { title, provenance } = await mapBuilderService.synthesizeNoteTitle(ai, note.text);
+            const sourceBook = activeProjectData?.importedNoteSources?.find(s => s.id === note.sourceId);
+
+            logActivity('ADD_NOTE_TO_MAP', {
+                bookTitle: sourceBook?.bookTitle || 'Unknown Book',
+                noteText: note.text,
+                synthesizedTitle: title,
+                provenance
+            });
+
+            const finalId = `note_${note.id}`;
+            const finalNode: MapNode = {
+                ...placeholderNode,
+                id: finalId,
+                name: title,
+                sourceNotes: [note],
+            };
+
+            updateActiveProjectData(d => ({
+                ...d,
+                mapLayout: {
+                    ...d.mapLayout,
+                    nodes: d.mapLayout.nodes.map(n => n.id === tempId ? finalNode : n)
+                }
+            }));
+
+        } catch (error) {
+            console.error("Failed to synthesize note title:", error);
+            updateActiveProjectData(d => ({
+                ...d,
+                mapLayout: { ...d.mapLayout, nodes: d.mapLayout.nodes.filter(n => n.id !== tempId) },
+                processedNoteIds: (d.processedNoteIds || []).filter(id => id !== note.id)
+            }));
+        }
+    }, [ai, updateActiveProjectData, handleMarkNotesAsProcessed, logActivity, activeProjectData?.importedNoteSources]);
+
+    const handleAddMultipleNotesToMap = useCallback(async (notes: KindleNote[], position: { x: number; y: number }) => {
+        const gridCols = Math.ceil(Math.sqrt(notes.length));
+        const spacing = 170;
+        let noteIndex = 0;
+        
+        for (const note of notes) {
+            const row = Math.floor(noteIndex / gridCols);
+            const col = noteIndex % gridCols;
+            const notePosition = {
+                x: position.x + col * spacing - (gridCols - 1) * spacing / 2,
+                y: position.y + row * spacing
+            };
+            await handleAddNoteToMap(note, notePosition); // Await to process one by one to avoid rate limits
+            noteIndex++;
+        }
+    }, [handleAddNoteToMap]);
+    
+    const handleAttachSourceNote = useCallback((nodeId: string | number, notes: KindleNote[]) => {
+        updateActiveProjectData(d => ({
+            ...d,
+            mapLayout: {
+                ...d.mapLayout,
+                nodes: d.mapLayout.nodes.map(n => {
+                    if (n.id === nodeId) {
+                        const existingNotes = new Map((n.sourceNotes || []).map(sn => [sn.id, sn]));
+                        notes.forEach(newNote => existingNotes.set(newNote.id, newNote));
+                        return { ...n, sourceNotes: Array.from(existingNotes.values()) };
+                    }
+                    return n;
+                })
+            }
+        }));
+        handleMarkNotesAsProcessed(notes.map(n => n.id));
+    }, [updateActiveProjectData, handleMarkNotesAsProcessed]);
+    
+    const handleAppendToNodeNotes = useCallback((nodeId: string | number, notes: KindleNote[]) => {
+        updateActiveProjectData(d => ({
+            ...d,
+            mapLayout: {
+                ...d.mapLayout,
+                nodes: d.mapLayout.nodes.map(n => {
+                    if (n.id === nodeId) {
+                        const newContent = notes.map(note => `<blockquote>${note.text}</blockquote>`).join('');
+                        return { ...n, notes: (n.notes || '') + newContent };
+                    }
+                    return n;
+                })
+            }
+        }));
+        handleMarkNotesAsProcessed(notes.map(n => n.id));
+    }, [updateActiveProjectData, handleMarkNotesAsProcessed]);
+
 
     // --- Render Logic ---
     if (!activeProjectData) {
@@ -395,6 +546,10 @@ const App: React.FC = () => {
                         onClearInitialWorkbenchData={() => setInitialWorkbenchData(null)}
                         beliefChallenge={beliefChallenge}
                         setIsChallengeOpen={setIsChallengeOpen}
+                        onAddNoteToMap={handleAddNoteToMap}
+                        onAddMultipleNotesToMap={handleAddMultipleNotesToMap}
+                        onAttachSourceNote={handleAttachSourceNote}
+                        onAppendToNodeNotes={handleAppendToNodeNotes}
                     />
                 );
             case 'feed':
@@ -429,6 +584,18 @@ const App: React.FC = () => {
                 }}
                 {...beliefChallenge}
             />
+            {currentView === 'map' && (
+                <NotesInbox
+                    isOpen={isNotesInboxOpen}
+                    onClose={() => setIsNotesInboxOpen(false)}
+                    importedNoteSources={activeProjectData.importedNoteSources || []}
+                    processedNoteIds={new Set(activeProjectData.processedNoteIds || [])}
+                    onImportNotes={handleImportNotes}
+                    onDeleteSource={handleDeleteNoteSource}
+                    onUpdateSourceMetadata={handleUpdateNoteSourceMetadata}
+                    onMarkNotesAsProcessed={handleMarkNotesAsProcessed}
+                />
+            )}
             {renderView()}
             
             <header className="absolute top-5 left-5 right-5 z-20 flex justify-between items-start gap-4 pointer-events-none">
@@ -458,6 +625,11 @@ const App: React.FC = () => {
                     />
                 </div>
                  <div className="flex items-center gap-2 pointer-events-auto">
+                    {currentView === 'map' && (
+                         <button onClick={() => setIsNotesInboxOpen(true)} className="p-2.5 bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black focus:ring-cyan-500" aria-label="Open Notes Inbox">
+                            <BookOpenIcon className="w-5 h-5" />
+                        </button>
+                    )}
                      <button onClick={() => setIsChallengeOpen(true)} className="p-2.5 bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black focus:ring-yellow-500" aria-label="Open Belief Flip Challenge">
                         <LightbulbIcon className="w-5 h-5" />
                     </button>
@@ -522,9 +694,7 @@ const App: React.FC = () => {
                     <BrainCircuit className="w-24 h-24 mx-auto text-gray-600"/>
                     <h2 className="text-2xl mt-4 font-bold">Conceptual Map Builder</h2>
                     <p className="mt-2 max-w-md">
-                        Drag concepts from the "Map Tray" on the right to start building your map.
-                        <br />
-                        You can add concepts to the tray while exploring the Nebula.
+                        Drag concepts from the "Map Tray" on the right or import notes from the Notes Inbox to start building your map.
                     </p>
                 </div>
             )}

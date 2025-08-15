@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, Type, Chat } from '@google/genai';
-import type { ProjectActivityType } from '../../../types';
+import type { ProjectActivityType, KindleNote } from '../../../types';
 import { X, NoteIcon, DownloadIcon, UndoIcon, RedoIcon, BoldIcon, ItalicIcon, SparkleIcon, Check, PaletteIcon, FontSizeIcon, RefreshCw, CopyIcon, InsertBelowIcon, FlaskConicalIcon, SendIcon } from '../../icons';
 
 const useHistoryState = <T,>(initialState: T): [T, (newState: T, immediate?: boolean) => void, () => void, () => void, boolean, boolean] => {
@@ -52,6 +52,7 @@ interface StudioPanelProps {
     ai: GoogleGenAI;
     analysisMode?: boolean;
     onDeconstruct?: (result: { premises: string[], conclusion: string }) => void;
+    sourceNotes?: KindleNote[];
 }
 
 
@@ -143,7 +144,8 @@ const StudioPanel: React.FC<StudioPanelProps> = ({
     logActivity,
     ai,
     analysisMode = false,
-    onDeconstruct
+    onDeconstruct,
+    sourceNotes,
 }) => {
     const [position, setPosition] = useState({ x: 0, y: 0 });
     const [size, setSize] = useState({ width: 600, height: 450 });
@@ -430,7 +432,7 @@ const StudioPanel: React.FC<StudioPanelProps> = ({
                     model: 'gemini-2.5-flash',
                     inputTokens: response.usageMetadata?.promptTokenCount,
                     outputTokens: response.usageMetadata?.candidatesTokenCount,
-                    totalTokens: response.usageMetadata?.totalTokenCount,
+                    totalTokens: (response.usageMetadata?.promptTokenCount || 0) + (response.usageMetadata?.candidatesTokenCount || 0),
                 }
             });
 
@@ -476,7 +478,7 @@ const StudioPanel: React.FC<StudioPanelProps> = ({
                     model: 'gemini-2.5-flash',
                     inputTokens: response.usageMetadata?.promptTokenCount,
                     outputTokens: response.usageMetadata?.candidatesTokenCount,
-                    totalTokens: response.usageMetadata?.totalTokenCount,
+                    totalTokens: (response.usageMetadata?.promptTokenCount || 0) + (response.usageMetadata?.candidatesTokenCount || 0),
                 }
             });
 
@@ -691,6 +693,20 @@ Text: "${analysisText}"`;
                     Ask AI
                 </button>
             </div>
+
+            {!analysisMode && sourceNotes && sourceNotes.length > 0 && (
+                <div className="flex-shrink-0 p-4 border-b border-gray-700 bg-gray-800/50">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-2">Source Note(s) ({sourceNotes.length})</h4>
+                    <div className="text-sm text-gray-300 max-h-28 overflow-y-auto pr-2 space-y-3">
+                        {sourceNotes.map((note, index) => (
+                             <div key={index} className="border-b border-gray-700/50 last:border-b-0 pb-3 last:pb-0">
+                                <p className="italic">"{note.text}"</p>
+                                <p className="text-right text-xs text-gray-500 mt-1">{note.heading}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="flex-grow p-4 overflow-y-auto" onClick={() => { editorRef.current?.focus(); cleanupAiInteraction(); }}>
                 <div

@@ -1,6 +1,7 @@
 
 
 
+
 export interface RawNode {
   id: number;
   name: string;
@@ -48,6 +49,16 @@ export interface Citation {
 
 export type RelationshipType = string;
 
+export interface KindleNote {
+  id: string;
+  heading: string;
+  text: string;
+  page: number | null;
+  color: string | null;
+  type: 'highlight' | 'note';
+  sourceId: string;
+}
+
 export interface MapNode {
   id: number | string; // Use the original node ID or a generated string for AI/user nodes
   name:string;
@@ -69,6 +80,7 @@ export interface MapNode {
   isCitation?: boolean;
   citationData?: Citation;
   notes?: string;
+  sourceNotes?: KindleNote[];
 }
 
 export interface MapLink {
@@ -154,7 +166,9 @@ export type ProjectActivityType =
   | 'START_BELIEF_CHALLENGE'
   | 'BUILD_BELIEF_CHALLENGE_PATH'
   | 'COMPLETE_BELIEF_CHALLENGE'
-  | 'INITIATE_BELIEF_CHALLENGE_FROM_MAP';
+  | 'INITIATE_BELIEF_CHALLENGE_FROM_MAP'
+  | 'IMPORT_NOTES'
+  | 'ADD_NOTE_TO_MAP';
 
 export interface ProjectActivity {
   id: string;
@@ -214,6 +228,12 @@ export interface ChallengeSession {
   status: 'generating_suggestions' | 'topic_selection' | 'active' | 'completed' | 'discarded';
 }
 
+export interface ImportedNoteSource {
+    id: string;
+    bookTitle: string;
+    author: string;
+    notes: KindleNote[];
+}
 
 // --- Type for Data Portability ---
 export interface AppSessionData {
@@ -227,6 +247,14 @@ export interface AppSessionData {
     seenPublicationIds: string[];
     projectDiary: ProjectActivity[];
     beliefFlipChallenges: ChallengeSession[];
+    importedNoteSources?: ImportedNoteSource[];
+    processedNoteIds?: string[];
+    // Deprecated, use importedNoteSources instead
+    importedNotes?: {
+        bookTitle: string;
+        author: string;
+        notes: KindleNote[];
+    } | null;
 }
 
 export interface Project {
@@ -286,6 +314,10 @@ export interface MapBuilderProps {
     onClearInitialWorkbenchData?: () => void;
     beliefChallenge: ReturnType<typeof import('../hooks/useBeliefFlipChallenge').useBeliefFlipChallenge>;
     setIsChallengeOpen: (isOpen: boolean) => void;
+    onAddNoteToMap: (note: KindleNote, position: { x: number, y: number }) => void;
+    onAddMultipleNotesToMap: (notes: KindleNote[], position: { x: number, y: number }) => void;
+    onAttachSourceNote: (nodeId: string | number, notes: KindleNote[]) => void;
+    onAppendToNodeNotes: (nodeId: string | number, notes: KindleNote[]) => void;
 }
 
 export interface NodeContextMenuState {
@@ -300,6 +332,13 @@ export interface LinkContextMenuState {
     link: MapLink;
 }
 
+export interface DropOnNodeMenuState {
+    x: number;
+    y: number;
+    targetNodeId: string | number;
+    droppedNotes: KindleNote[];
+}
+
 export interface EditLinkTypesMenuState {
     anchorEl: HTMLElement;
     link: MapLink;
@@ -309,8 +348,8 @@ export interface FloatingTooltipState {
     x: number;
     y: number;
     title?: string;
-    text: string | string[] | RelationshipTypeInfo[] | { name: string, summary: string }[] | LogicalConstruct | Citation[];
-    type?: RelationshipType | 'justification' | 'synthesis' | 'genealogy' | 'formalism' | 'logical_construct' | 'citation' | 'implications';
+    text: string | string[] | RelationshipTypeInfo[] | { name: string, summary: string }[] | LogicalConstruct | Citation[] | KindleNote[];
+    type?: RelationshipType | 'justification' | 'synthesis' | 'genealogy' | 'formalism' | 'logical_construct' | 'citation' | 'implications' | 'source_note';
     color?: string;
     linkForCitation?: MapLink;
 }

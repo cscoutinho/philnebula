@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import type { D3Node, Citation, MapLink, MapBuilderProps, FloatingTooltipState, LogicalWorkbenchState, RelationshipTypeInfo, BeliefConfirmationState } from '../../types';
+import type { D3Node, Citation, MapLink, MapBuilderProps, FloatingTooltipState, LogicalWorkbenchState, RelationshipTypeInfo, BeliefConfirmationState, KindleNote, DropOnNodeMenuState } from '../../types';
 
 import { useMapUI } from './hooks/useMapUI';
 import { useMapAI } from './hooks/useMapAI';
@@ -21,6 +21,7 @@ import LinkComponent from './LinkComponent';
 import DefinitionAnalysisPanel from './Panels/DefinitionAnalysisPanel';
 import StudioPanel from './Panels/StudioPanel';
 import BeliefConfirmationPanel from './Panels/BeliefConfirmationPanel';
+import DropOnNodeMenu from './ContextMenus/DropOnNodeMenu';
 
 import { X, PlusCircle, ExternalLinkIcon } from '../icons';
 
@@ -66,6 +67,26 @@ const TooltipContent = ({ tooltip, handlePinCitation, setFloatingTooltip }: {
         );
     }
     
+    if (type === 'source_note' && Array.isArray(text) && text.length > 0 && typeof text[0] === 'object' && 'text' in text[0]) {
+        const notes = text as KindleNote[];
+        return (
+            <div className="flex flex-col">
+                <div className="flex justify-between items-start mb-2">
+                    <h4 className="font-bold text-base text-cyan-300">Source Note(s)</h4>
+                    <button onClick={() => setFloatingTooltip(null)} className="p-1 -mt-1 -mr-1 text-gray-400 hover:text-white"><X className="w-4 h-4"/></button>
+                </div>
+                 <div className='flex flex-col gap-3 max-h-48 overflow-y-auto pr-2'>
+                    {notes.map((note, index) => (
+                        <div key={index} className="border-b border-gray-700 last:border-b-0 pb-3 last:pb-0">
+                            <p className="text-xs text-gray-400 mb-1">{note.heading}</p>
+                            <p className="text-gray-200 italic">"{note.text}"</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
     const renderableText = text as any;
     
     if (type === 'logical_construct' && typeof renderableText === 'object' && 'formalRepresentation' in renderableText) {
@@ -119,6 +140,10 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
     onClearInitialWorkbenchData,
     beliefChallenge,
     setIsChallengeOpen,
+    onAddNoteToMap,
+    onAddMultipleNotesToMap,
+    onAttachSourceNote,
+    onAppendToNodeNotes,
 }) => {
     const { nodes, links } = layout;
     const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY! }), []);
@@ -127,6 +152,7 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
     const [isExportingImg, setIsExportingImg] = useState(false);
     const [isExportingJson, setIsExportingJson] = useState(false);
     const [beliefConfirmationState, setBeliefConfirmationState] = useState<BeliefConfirmationState | null>(null);
+    const [dropOnNodeMenu, setDropOnNodeMenu] = useState<DropOnNodeMenuState | null>(null);
 
     const relationshipColorMap = useMemo(() => {
         return relationshipTypes.reduce((acc, item) => {
@@ -158,6 +184,7 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
     const { ref: colorPickerRef, style: colorPickerStyle } = useFloatingPosition(ui.colorPicker);
     const { ref: nodeContextMenuRef, style: nodeContextMenuStyle } = useFloatingPosition(ui.nodeContextMenu);
     const { ref: linkContextMenuRef, style: linkContextMenuStyle } = useFloatingPosition(ui.linkContextMenu);
+    const { ref: dropOnNodeMenuRef, style: dropOnNodeMenuStyle } = useFloatingPosition(dropOnNodeMenu);
     const { ref: relationshipMenuRef, style: relationshipMenuStyle } = useFloatingPosition(ui.relationshipMenu, { centered: true });
     const { ref: editLinkTypesMenuRef, style: editLinkTypesMenuStyle } = useFloatingPosition(ui.editLinkTypesMenu, { strategy: 'flip' });
     const { ref: floatingTooltipRef, style: floatingTooltipStyle } = useFloatingPosition(ui.floatingTooltip, { offsetX: 15, offsetY: 10 });
@@ -206,8 +233,8 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
         });
 
         nodes.forEach(node => {
-            ctx.fillStyle = NodeComponent.getFill(node, { linkingNodeId: null, selectedNodeId: null, regionSelectedNodeIds: new Set() });
-            ctx.strokeStyle = NodeComponent.getStroke(node, { linkingNodeId: null, regionSelectedNodeIds: new Set() });
+            ctx.fillStyle = NodeComponent.getFill(node, { linkingNodeId: null, selectedNodeId: null, regionSelectedNodeIds: new Set(), dropTargetNodeId: null });
+            ctx.strokeStyle = NodeComponent.getStroke(node, { linkingNodeId: null, regionSelectedNodeIds: new Set(), dropTargetNodeId: null });
             ctx.lineWidth = 2;
             ctx.beginPath();
             if (node.shape === 'rect') {
@@ -229,7 +256,7 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
         linkEl.href = imageURL;
         linkEl.download = `conceptual-map.${format}`;
         linkEl.click();
-        document.body.removeChild(linkEl);
+        
         URL.revokeObjectURL(linkEl.href);
         setIsExportingImg(false);
     }, [nodes, links, nodeMap, relationshipColorMap]);
@@ -258,6 +285,9 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
                 relationshipColorMap={relationshipColorMap}
                 uiState={ui}
                 aiState={aiHooks}
+                onAddNoteToMap={onAddNoteToMap}
+                onAddMultipleNotesToMap={onAddMultipleNotesToMap}
+                setDropOnNodeMenu={setDropOnNodeMenu}
             />
 
             <MapToolbar
@@ -274,6 +304,7 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
             {ui.nodeContextMenu && <div ref={nodeContextMenuRef} style={nodeContextMenuStyle}><NodeContextMenu nodeContextMenu={ui.nodeContextMenu} node={nodeMap.get(ui.nodeContextMenu.nodeId)} isAnalyzingGenealogy={aiHooks.isAnalyzingGenealogy === ui.nodeContextMenu.nodeId} setLinkingNode={ui.setLinkingNode} setNodeContextMenu={ui.setNodeContextMenu} handleAnalyzeGenealogy={aiHooks.handleAnalyzeGenealogy} setChangingNodeState={ui.setChangingNodeState} setColorPicker={ui.setColorPicker} updateNodeShape={ui.updateNodeShape} deleteNode={ui.deleteNode} onEditNote={(nodeId) => ui.setStudioState({ nodeId, x: ui.nodeContextMenu!.x, y: ui.nodeContextMenu!.y })} /></div>}
             {ui.colorPicker && <div ref={colorPickerRef} style={colorPickerStyle}><ColorPicker colorPicker={ui.colorPicker} textColors={ui.textColors} handleTextColorChange={ui.handleTextColorChange} /></div>}
             {ui.linkContextMenu && <div ref={linkContextMenuRef} style={linkContextMenuStyle}><LinkContextMenu linkContextMenu={ui.linkContextMenu} setLogicalWorkbench={ui.setLogicalWorkbench} handleFormalizeArgument={(state) => aiHooks.handleFormalizeArgument(state)} setLinkContextMenu={ui.setLinkContextMenu} setDialecticAnalysis={ui.setDialecticAnalysis} handleAnalyzeArgument={aiHooks.handleAnalyzeArgument} handleExploreImplications={aiHooks.handleExploreImplications} generateJustification={aiHooks.generateJustification} setEditLinkTypesMenu={ui.setEditLinkTypesMenu} updateLinkPathStyle={ui.updateLinkPathStyle} deleteLink={ui.deleteLink} handleAnalyzeDefinition={aiHooks.handleAnalyzeDefinition} onChallengeBelief={(link, x, y) => setBeliefConfirmationState({ link, x, y })} /></div>}
+            {dropOnNodeMenu && <div ref={dropOnNodeMenuRef} style={dropOnNodeMenuStyle}><DropOnNodeMenu menuState={dropOnNodeMenu} onAttach={onAttachSourceNote} onAppend={onAppendToNodeNotes} onClose={() => setDropOnNodeMenu(null)} /></div>}
             {ui.editLinkTypesMenu && (
                 <div ref={editLinkTypesMenuRef} style={editLinkTypesMenuStyle} className="fixed bg-gray-800 border border-gray-600 rounded-md shadow-lg p-2 z-50 text-white text-sm w-64" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-between items-center mb-2">
@@ -357,6 +388,7 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
                     state={ui.studioState}
                     nodeName={nodeMap.get(ui.studioState.nodeId)?.name || ''}
                     initialNotes={nodeMap.get(ui.studioState.nodeId)?.notes || ''}
+                    sourceNotes={nodeMap.get(ui.studioState.nodeId)?.sourceNotes}
                     onClose={() => ui.setStudioState(null)}
                     onUpdateContent={ui.handleUpdateNoteContent}
                     onLogEdit={ui.handleLogNoteEdit}
