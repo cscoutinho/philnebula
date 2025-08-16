@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import type { KindleNote, ImportedNoteSource, PublicationType } from '../../types';
 import * as notesParser from '../../services/notesParser';
@@ -13,7 +12,7 @@ interface NotesInboxProps {
     processedNoteIds: Set<string>;
     onImportNotes: (data: PendingSource) => void;
     onDeleteSource: (sourceId: string) => void;
-    onUpdateSourceMetadata: (sourceId: string, newTitle: string, newAuthor: string) => void;
+    onUpdateSourceMetadata: (sourceId: string, metadata: Partial<Omit<ImportedNoteSource, 'id' | 'notes'>>) => void;
     onMarkNotesAsProcessed: (noteIds: string[]) => void;
 }
 
@@ -66,7 +65,7 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
     const [doi, setDoi] = useState('');
     
     const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-    const [editingSource, setEditingSource] = useState<{ id: string; title: string; author: string } | null>(null);
+    const [editingSource, setEditingSource] = useState<ImportedNoteSource | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
     const [showProcessed, setShowProcessed] = useState(true);
@@ -120,7 +119,7 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
     
     const fetchMetadata = useCallback(async (parsedData: { title: string, author: string, notes: Omit<KindleNote, 'sourceId'>[] }, publicationType: PublicationType, doiValue?: string) => {
         setIsFetchingMetadata(true);
-        let metadata: Partial<ImportedNoteSource> = {};
+        let metadata: Partial<Omit<ImportedNoteSource, 'id' | 'notes'>> = {};
 
         try {
             if (publicationType === 'book') {
@@ -132,8 +131,11 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                         const book = data.items[0].volumeInfo;
                         metadata.coverImageUrl = book.imageLinks?.thumbnail;
                         metadata.description = book.description;
-                        metadata.title = book.title;
-                        metadata.author = book.authors?.join(', ');
+                        metadata.title = book.title || parsedData.title;
+                        metadata.author = book.authors?.join(', ') || parsedData.author;
+                        metadata.publicationDate = book.publishedDate;
+                        metadata.publisher = book.publisher;
+                        metadata.pages = book.pageCount?.toString();
                     }
                 }
             } else if ((publicationType === 'article' || publicationType === 'chapter') && doiValue) {
@@ -143,7 +145,25 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                     const item = data.message;
                     metadata.title = item.title?.[0] || parsedData.title;
                     metadata.author = item.author?.map((a: any) => `${a.given} ${a.family}`).join(', ') || parsedData.author;
-                    metadata.journalTitle = item['container-title']?.[0];
+                    if (publicationType === 'article') {
+                        metadata.journalTitle = item['container-title']?.[0];
+                    } else { // chapter
+                        metadata.bookTitle = item['container-title']?.[0];
+                        if (item.ISBN && Array.isArray(item.ISBN) && item.ISBN.length > 0) {
+                            const isbn = item.ISBN[0];
+                            try {
+                                const bookResponse = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=1`);
+                                if (bookResponse.ok) {
+                                    const bookData = await bookResponse.json();
+                                    if (bookData.items && bookData.items.length > 0) {
+                                        metadata.coverImageUrl = bookData.items[0].volumeInfo.imageLinks?.thumbnail;
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn("Failed to fetch book cover for chapter:", e);
+                            }
+                        }
+                    }
                     if (item.issued && item.issued['date-parts']?.[0]) {
                         metadata.publicationDate = item.issued['date-parts'][0].join('-');
                     }
@@ -151,8 +171,19 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                     metadata.volume = item.volume;
                     metadata.issue = item.issue;
                     metadata.pages = item.page;
-                    metadata.description = item.abstract?.replace(/<[^>]+>/g, ''); // Strip HTML tags from abstract
+                    metadata.description = item.abstract?.replace(/<[^>]+>/g, '');
                     metadata.doi = doiValue;
+                    
+                    let fetchedKeywords: string[] = [];
+                    if (item.subject && Array.isArray(item.subject)) {
+                        fetchedKeywords = fetchedKeywords.concat(item.subject.filter((k: any) => typeof k === 'string'));
+                    }
+                    if (item.keywords && Array.isArray(item.keywords)) { // Some journals use this field
+                        fetchedKeywords = fetchedKeywords.concat(item.keywords.filter((k: any) => typeof k === 'string'));
+                    }
+                    if (fetchedKeywords.length > 0) {
+                        metadata.keywords = [...new Set(fetchedKeywords)];
+                    }
                 }
             }
         } catch (error) {
@@ -242,7 +273,8 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
 
     const handleSaveMetadata = () => {
         if (editingSource) {
-            onUpdateSourceMetadata(editingSource.id, editingSource.title.trim(), editingSource.author.trim());
+            const { id, notes, ...metadata } = editingSource;
+            onUpdateSourceMetadata(id, metadata);
             setEditingSource(null);
         }
     };
@@ -320,7 +352,7 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                  ) : (
                     <>
                         <div className="flex gap-4">
-                            {pendingImport.publicationType === 'book' && (
+                            {(pendingImport.publicationType === 'book' || pendingImport.coverImageUrl) && (
                                 <div className="w-1/3 flex-shrink-0">
                                 {pendingImport.coverImageUrl ? (
                                     <img src={pendingImport.coverImageUrl} alt="Book cover" className="w-full object-cover rounded shadow-lg" />
@@ -340,17 +372,24 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                                     <label className="block text-xs font-medium text-gray-300 mb-1">Author(s)</label>
                                     <input type="text" value={pendingImport.author} onChange={e => setPendingImport(p => p ? {...p, author: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" />
                                 </div>
+                                {pendingImport.bookTitle && <div><label className="block text-xs font-medium text-gray-300 mb-1">Book Title</label><input type="text" value={pendingImport.bookTitle} onChange={e => setPendingImport(p => p ? {...p, bookTitle: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" /></div>}
+                                {pendingImport.journalTitle && <div><label className="block text-xs font-medium text-gray-300 mb-1">Journal</label><input type="text" value={pendingImport.journalTitle} onChange={e => setPendingImport(p => p ? {...p, journalTitle: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" /></div>}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div><label className="block text-xs font-medium text-gray-300 mb-1">Date</label><input type="text" value={pendingImport.publicationDate || ''} onChange={e => setPendingImport(p => p ? {...p, publicationDate: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="e.g., 2023-04-01" /></div>
+                                    <div><label className="block text-xs font-medium text-gray-300 mb-1">Publisher</label><input type="text" value={pendingImport.publisher || ''} onChange={e => setPendingImport(p => p ? {...p, publisher: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" /></div>
+                                </div>
+                                <div><label className="block text-xs font-medium text-gray-300 mb-1">Pages</label><input type="text" value={pendingImport.pages || ''} onChange={e => setPendingImport(p => p ? {...p, pages: e.target.value} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="e.g., 42-59 or 320" /></div>
+                                <div><label className="block text-xs font-medium text-gray-300 mb-1">Keywords (comma-separated)</label><input type="text" value={pendingImport.keywords?.join(', ') || ''} onChange={e => setPendingImport(p => p ? {...p, keywords: e.target.value.split(',').map(k => k.trim())} : null)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm" /></div>
+
                             </div>
                         </div>
                         {pendingImport.description && (
                             <div className="text-sm text-gray-400">
                                 <p className="text-xs font-medium text-gray-300 mb-1">{pendingImport.publicationType === 'book' ? 'Synopsis' : 'Abstract'}</p>
-                                <p className="max-h-24 overflow-y-auto p-2 bg-gray-900/50 rounded text-xs leading-relaxed">{pendingImport.description}</p>
+                                <textarea value={pendingImport.description} onChange={e => setPendingImport(p => p ? {...p, description: e.target.value} : null)} className="w-full p-2 bg-gray-900/50 rounded text-xs leading-relaxed h-24 resize-none border border-gray-700" />
                             </div>
                         )}
-                         {pendingImport.journalTitle && <p className="text-xs"><strong className="text-gray-300">Journal:</strong> {pendingImport.journalTitle}</p>}
-                         {pendingImport.publicationDate && <p className="text-xs"><strong className="text-gray-300">Date:</strong> {pendingImport.publicationDate}</p>}
-                        <div className="text-sm text-gray-400">
+                         <div className="text-sm text-gray-400">
                             <span className="font-semibold">{pendingImport.notes.length}</span> notes found.
                         </div>
                         <div className="pt-2">
@@ -376,23 +415,31 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
             {importedNoteSources.length > 0 ? (
                 <ul className="flex-grow p-2 space-y-1 overflow-y-auto">
                     {importedNoteSources.map(source => (
-                        <li key={source.id} className="group rounded-md hover:bg-gray-700/70 transition-colors relative">
+                        <li key={source.id} className="group rounded-md hover:bg-gray-700/70 transition-colors">
                             {editingSource?.id === source.id ? (
                                 <div className="p-3 space-y-2">
-                                    <input type="text" value={editingSource.title} onChange={e => setEditingSource(es => es ? {...es, title: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="Title"/>
-                                    <input type="text" value={editingSource.author} onChange={e => setEditingSource(es => es ? {...es, author: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="Author"/>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input type="text" value={editingSource.title} onChange={e => setEditingSource(es => es ? {...es, title: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm col-span-2" placeholder="Title"/>
+                                        <input type="text" value={editingSource.author} onChange={e => setEditingSource(es => es ? {...es, author: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm col-span-2" placeholder="Author"/>
+                                        {editingSource.publicationType === 'chapter' && <input type="text" value={editingSource.bookTitle || ''} onChange={e => setEditingSource(es => es ? {...es, bookTitle: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm col-span-2" placeholder="Book Title"/>}
+                                        {editingSource.publicationType === 'article' && <input type="text" value={editingSource.journalTitle || ''} onChange={e => setEditingSource(es => es ? {...es, journalTitle: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm col-span-2" placeholder="Journal"/>}
+                                        <input type="text" value={editingSource.publicationDate || ''} onChange={e => setEditingSource(es => es ? {...es, publicationDate: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="Date"/>
+                                        <input type="text" value={editingSource.publisher || ''} onChange={e => setEditingSource(es => es ? {...es, publisher: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm" placeholder="Publisher"/>
+                                        <input type="text" value={editingSource.pages || ''} onChange={e => setEditingSource(es => es ? {...es, pages: e.target.value} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm col-span-2" placeholder="Pages"/>
+                                    </div>
+                                    <input type="text" value={editingSource.keywords?.join(', ') || ''} onChange={e => setEditingSource(es => es ? {...es, keywords: e.target.value.split(',').map(k => k.trim())} : null)} className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md text-sm col-span-2" placeholder="Keywords (comma-separated)"/>
                                     <div className="flex gap-2">
                                         <button onClick={handleSaveMetadata} className="p-1 text-green-400 hover:text-green-300" aria-label="Save changes"><Check className="w-5 h-5"/></button>
                                         <button onClick={() => setEditingSource(null)} className="p-1 text-red-400 hover:text-red-300" aria-label="Cancel editing"><X className="w-5 h-5"/></button>
                                     </div>
                                 </div>
                             ) : (
-                                <>
+                                <div className="relative">
                                     <div className="absolute top-1 right-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                                        <button onClick={() => setEditingSource({id: source.id, title: source.title, author: source.author})} className="p-1 text-gray-400 hover:text-cyan-400" aria-label="Edit source metadata"><Edit className="w-4 h-4"/></button>
-                                        <button onClick={() => { if(confirm('Are you sure you want to delete this source and all its notes?')) {setSelectedSourceId(null); onDeleteSource(source.id)}}} className="p-1 text-gray-400 hover:text-red-400" aria-label="Delete source"><Trash2 className="w-4 h-4"/></button>
+                                        <button onClick={(e) => { e.stopPropagation(); setEditingSource(JSON.parse(JSON.stringify(source))); }} className="p-1 text-gray-400 hover:text-cyan-400" aria-label="Edit source metadata"><Edit className="w-4 h-4"/></button>
+                                        <button onClick={(e) => { e.stopPropagation(); if(confirm('Are you sure you want to delete this source and all its notes?')) {if (selectedSourceId === source.id) {setSelectedSourceId(null);} onDeleteSource(source.id);}}} className="p-1 text-gray-400 hover:text-red-400" aria-label="Delete source"><Trash2 className="w-4 h-4"/></button>
                                     </div>
-                                    <button onClick={() => setSelectedSourceId(source.id)} className="w-full text-left p-3 flex items-center gap-3">
+                                    <div onClick={() => setSelectedSourceId(source.id)} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSelectedSourceId(source.id)} role="button" tabIndex={0} className="w-full text-left p-3 flex items-center gap-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded-md">
                                         {source.coverImageUrl ? (
                                             <img src={source.coverImageUrl} alt={`Cover of ${source.title}`} className="w-10 h-14 object-cover rounded flex-shrink-0 shadow-md" />
                                         ) : (
@@ -405,8 +452,8 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                                             <p className="text-xs text-gray-400 truncate">{source.author}</p>
                                             <p className="text-xs text-gray-500 mt-1">{source.notes.length} notes</p>
                                         </div>
-                                    </button>
-                                </>
+                                    </div>
+                                </div>
                             )}
                         </li>
                     ))}
@@ -432,6 +479,18 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                     <div>
                         <h4 className="font-bold text-white truncate">{selectedSource.title}</h4>
                         <p className="text-sm text-gray-400">{selectedSource.author}</p>
+                        {selectedSource.bookTitle && <p className="text-xs text-gray-500 italic">In: {selectedSource.bookTitle}</p>}
+                        {(selectedSource.publisher || selectedSource.publicationDate || selectedSource.pages) && (
+                            <p className="text-xs text-gray-500 mt-1">
+                                {[selectedSource.publisher, selectedSource.publicationDate].filter(Boolean).join(', ')}
+                                {selectedSource.pages && <span className="ml-2 pl-2 border-l border-gray-600">pp. {selectedSource.pages}</span>}
+                            </p>
+                        )}
+                        {selectedSource.keywords && selectedSource.keywords.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                {selectedSource.keywords.map(k => <span key={k} className="px-1.5 py-0.5 rounded text-xs bg-gray-700 text-gray-300">{k}</span>)}
+                            </div>
+                        )}
                     </div>
                      <input
                         type="text"

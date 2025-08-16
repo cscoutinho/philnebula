@@ -101,7 +101,7 @@ const ActivityText: React.FC<{ activity: ProjectActivity }> = ({ activity }) => 
         case 'COMPLETE_BELIEF_CHALLENGE':
             return <>Completed belief challenge on <span className="italic text-gray-300">"{payload.belief}"</span>.</>;
         case 'IMPORT_NOTES':
-            return <>Imported {payload.noteCount} notes from <span className="font-bold text-gray-100">'{payload.bookTitle}'</span>.</>;
+            return <>Imported {payload.noteCount} notes from <span className="font-bold text-gray-100">'{payload.title}'</span>.</>;
         case 'ADD_NOTE_TO_MAP':
             return <>Added note as <span className="font-bold text-gray-100">'{payload.synthesizedTitle}'</span> from '{payload.bookTitle}'.</>;
         default:

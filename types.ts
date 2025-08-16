@@ -1,4 +1,5 @@
 
+
 export interface RawNode {
   id: number;
   name: string;
@@ -240,11 +241,13 @@ export interface ImportedNoteSource {
     // Academic metadata
     doi?: string;
     journalTitle?: string;
+    bookTitle?: string; // For book chapters
     publicationDate?: string;
     publisher?: string;
     volume?: string;
     issue?: string;
     pages?: string;
+    keywords?: string[];
 }
 
 // --- Type for Data Portability ---

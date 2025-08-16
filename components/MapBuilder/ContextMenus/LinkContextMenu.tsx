@@ -51,7 +51,7 @@ const LinkContextMenu: React.FC<LinkContextMenuProps> = ({
             {isChallengeable && (
                 <>
                     <button onClick={() => { onChallengeBelief(linkContextMenu.link, linkContextMenu.x, linkContextMenu.y); setLinkContextMenu(null); }} className="block w-full text-left px-3 py-1.5 hover:bg-gray-700 rounded flex items-center gap-2">
-                        <LightbulbIcon className="w-4 h-4 text-yellow-400"/>Desafiar Crença
+                        <LightbulbIcon className="w-4 h-4 text-yellow-400"/>Challenge Belief
                     </button>
                     <div className="my-1 border-t border-gray-700"></div>
                 </>

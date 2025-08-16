@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { parseMarkdown, flattenData } from './services/dataParser';
@@ -388,11 +389,11 @@ const App: React.FC = () => {
         }));
     }, [updateActiveProjectData]);
 
-    const handleUpdateNoteSourceMetadata = useCallback((sourceId: string, newTitle: string, newAuthor: string) => {
+    const handleUpdateNoteSourceMetadata = useCallback((sourceId: string, metadata: Partial<Omit<ImportedNoteSource, 'id' | 'notes'>>) => {
         updateActiveProjectData(d => ({
             ...d,
             importedNoteSources: (d.importedNoteSources || []).map(s => 
-                s.id === sourceId ? { ...s, title: newTitle, author: newAuthor } : s
+                s.id === sourceId ? { ...s, ...metadata } : s
             )
         }));
     }, [updateActiveProjectData]);
