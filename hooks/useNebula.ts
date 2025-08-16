@@ -2,13 +2,12 @@
 
 
 import { useState, useCallback, useEffect } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { D3Node, D3Link, ProjectActivityType } from '../types';
 import * as nebulaService from '../services/nebulaService';
+import { aiService } from '../services/aiService';
 
 export const useNebula = (
     data: { nodes: D3Node[], links: D3Link[] } | null,
-    ai: GoogleGenAI,
     logActivity: (type: ProjectActivityType, payload: { [key: string]: any }) => void
 ) => {
     const [selectedNode, setSelectedNode] = useState<D3Node | null>(null);
@@ -36,7 +35,7 @@ export const useNebula = (
         setRelatedConcepts([]);
 
         try {
-            const { rawResponse, data: relatedData, systemInstruction, promptForLogging, model, usageMetadata } = await nebulaService.findRelatedConcepts(ai, selectedNode, data.nodes);
+            const { rawResponse, data: relatedData, systemInstruction, promptForLogging, model, usageMetadata } = await nebulaService.findRelatedConcepts(aiService, selectedNode, data.nodes);
 
             logActivity('FIND_RELATED', {
                 conceptName: selectedNode.name,
@@ -48,7 +47,7 @@ export const useNebula = (
                     model,
                     inputTokens: usageMetadata?.promptTokenCount,
                     outputTokens: usageMetadata?.candidatesTokenCount,
-                    totalTokens: (usageMetadata?.promptTokenCount || 0) + (usageMetadata?.candidatesTokenCount || 0),
+                    totalTokens: usageMetadata?.totalTokenCount,
                 }
             });
 
@@ -76,7 +75,7 @@ export const useNebula = (
         } finally {
             setIsLoadingCrossLinks(false);
         }
-    }, [selectedNode, data, isLoadingCrossLinks, ai, logActivity]);
+    }, [selectedNode, data, isLoadingCrossLinks, logActivity]);
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const query = e.target.value;

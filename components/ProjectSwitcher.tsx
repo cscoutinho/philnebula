@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import type { Project } from '../types';
+import type { Project, ConfirmationRequestHandler } from '../types';
 import { BrainCircuit, Check, ChevronsUpDown, Edit, Plus, Trash2, X } from './icons';
 
 interface ProjectSwitcherProps {
@@ -10,6 +10,7 @@ interface ProjectSwitcherProps {
     onSwitchProject: (projectId: string) => void;
     onDeleteProject: (projectId: string) => void;
     onRenameProject: (projectId: string, newName: string) => void;
+    onRequestConfirmation: ConfirmationRequestHandler;
 }
 
 const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
@@ -19,6 +20,7 @@ const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
     onSwitchProject,
     onDeleteProject,
     onRenameProject,
+    onRequestConfirmation,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
@@ -126,7 +128,15 @@ const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
                                             </button>
                                             {projects.length > 1 && (
                                                 <button 
-                                                    onClick={(e) => { e.stopPropagation(); if(confirm(`Are you sure you want to delete "${project.name}"?`)) onDeleteProject(project.id); }} 
+                                                    onClick={(e) => { 
+                                                        e.stopPropagation(); 
+                                                        onRequestConfirmation({
+                                                            message: `Are you sure you want to delete "${project.name}"?\nThis action cannot be undone.`,
+                                                            onConfirm: () => onDeleteProject(project.id),
+                                                            title: `Delete Project: ${project.name}`,
+                                                            confirmText: 'Delete'
+                                                        });
+                                                    }} 
                                                     className="p-1 text-gray-400 hover:text-red-400"
                                                     aria-label={`Delete project ${project.name}`}
                                                 >

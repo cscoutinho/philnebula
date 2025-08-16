@@ -1,8 +1,7 @@
-
 import React, { useState } from 'react';
-import { GoogleGenAI } from '@google/genai';
-import type { CustomRelationshipType } from '../types';
+import type { CustomRelationshipType, ConfirmationRequestHandler, AiSettings } from '../types';
 import { X, DownloadCloudIcon, UploadCloudIcon, Trash2, PaletteIcon, SparkleIcon } from './icons';
+import { aiService } from '../../services/aiService';
 
 interface RelationshipTypeInfo {
     type: string;
@@ -17,21 +16,23 @@ interface SettingsModalProps {
     onCloudImport: () => Promise<{ success: boolean; message: string }>;
     customRelationshipTypes: CustomRelationshipType[];
     onUpdateCustomRelationshipTypes: (updater: (types: CustomRelationshipType[]) => CustomRelationshipType[]) => void;
-    ai: GoogleGenAI;
     defaultRelationshipTypes: RelationshipTypeInfo[];
     disabledDefaultTypes: string[];
     disabledCustomTypes: string[];
     onToggleRelationshipType: (typeName: string, isDefault: boolean) => void;
+    onRequestConfirmation: ConfirmationRequestHandler;
+    aiSettings?: AiSettings;
+    onUpdateAiSettings: (updater: (settings: AiSettings) => AiSettings) => void;
 }
 
-const RelationshipTypeManager: React.FC<Omit<SettingsModalProps, 'isOpen' | 'onClose' | 'onCloudExport' | 'onCloudImport'>> = ({
+const RelationshipTypeManager: React.FC<Omit<SettingsModalProps, 'isOpen' | 'onClose' | 'onCloudExport' | 'onCloudImport' | 'aiSettings' | 'onUpdateAiSettings'>> = ({
     customRelationshipTypes,
     onUpdateCustomRelationshipTypes,
-    ai,
     defaultRelationshipTypes,
     disabledDefaultTypes,
     disabledCustomTypes,
     onToggleRelationshipType,
+    onRequestConfirmation,
 }) => {
     const [newTypeName, setNewTypeName] = useState('');
     const [newTypeDescription, setNewTypeDescription] = useState('');
@@ -48,12 +49,9 @@ const RelationshipTypeManager: React.FC<Omit<SettingsModalProps, 'isOpen' | 'onC
         setIsSuggestingName(true);
         try {
             const prompt = `Based on the following description for a relationship between philosophical concepts, suggest a concise, academic name for the relationship type. The name should be 1-3 words max. Description: "${newTypeDescription}"`;
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
+            const response = await aiService.generateContent({
                 contents: prompt,
-                config: {
-                    systemInstruction: "You are an expert in philosophical and logical terminology. Respond ONLY with the suggested name in plain text, without any quotes or extra formatting."
-                }
+                systemInstruction: "You are an expert in philosophical and logical terminology. Respond ONLY with the suggested name in plain text, without any quotes or extra formatting."
             });
             const suggestedName = response.text.replace(/["']/g, '').trim();
             if (suggestedName) {
@@ -86,10 +84,15 @@ const RelationshipTypeManager: React.FC<Omit<SettingsModalProps, 'isOpen' | 'onC
     };
     
     const handleDeleteType = (name: string) => {
-        if(confirm(`Are you sure you want to delete the "${name}" relationship type? This also removes it from your disabled list if it's there.`)){
-            onUpdateCustomRelationshipTypes(prev => prev.filter(t => t.name !== name));
-            onToggleRelationshipType(name, false); // This will remove it from the disabled list if it exists.
-        }
+        onRequestConfirmation({
+            message: `Are you sure you want to delete the "${name}" relationship type? This also removes it from your disabled list if it's there.`,
+            title: 'Delete Relationship Type',
+            confirmText: 'Delete',
+            onConfirm: () => {
+                onUpdateCustomRelationshipTypes(prev => prev.filter(t => t.name !== name));
+                onToggleRelationshipType(name, false);
+            }
+        });
     };
 
     const RelationshipListItem: React.FC<{ type: { name: string; color: string; description: string; }, isDefault: boolean, isCustom?: boolean }> = ({ type, isDefault, isCustom }) => {
@@ -212,11 +215,69 @@ const RelationshipTypeManager: React.FC<Omit<SettingsModalProps, 'isOpen' | 'onC
     );
 }
 
+const AiProviderSettings: React.FC<{
+    settings?: AiSettings,
+    onUpdate: (updater: (settings: AiSettings) => AiSettings) => void
+}> = ({ settings, onUpdate }) => {
+    const currentSettings = settings || { provider: 'gemini', groqApiKey: '', groqModel: 'moonshotai/kimi-k2-instruct' };
+    
+    return (
+        <div>
+            <h3 className="text-lg font-semibold text-purple-300 flex items-center gap-2">
+                <SparkleIcon className="w-6 h-6"/>
+                AI Provider Settings
+            </h3>
+            <div className="mt-3 space-y-4">
+                <div>
+                    <label htmlFor="ai-provider" className="block text-sm font-medium text-gray-300 mb-1">Provider</label>
+                    <select
+                        id="ai-provider"
+                        value={currentSettings.provider}
+                        onChange={(e) => onUpdate(s => ({...s, provider: e.target.value as 'gemini' | 'groq'}))}
+                        className="w-full p-2 bg-gray-800 border border-gray-600 rounded-md text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    >
+                        <option value="gemini">Gemini (Default)</option>
+                        <option value="groq">Groq</option>
+                    </select>
+                </div>
+                {currentSettings.provider === 'groq' && (
+                    <div className="pl-4 border-l-2 border-gray-700 space-y-4">
+                        <div>
+                            <label htmlFor="groq-api-key" className="block text-sm font-medium text-gray-300 mb-1">Groq API Key</label>
+                            <input
+                                id="groq-api-key"
+                                type="password"
+                                value={currentSettings.groqApiKey}
+                                onChange={(e) => onUpdate(s => ({...s, groqApiKey: e.target.value}))}
+                                placeholder="gsk_..."
+                                className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm"
+                            />
+                        </div>
+                         <div>
+                            <label htmlFor="groq-model" className="block text-sm font-medium text-gray-300 mb-1">Groq Model</label>
+                            <input
+                                id="groq-model"
+                                type="text"
+                                value={currentSettings.groqModel}
+                                onChange={(e) => onUpdate(s => ({...s, groqModel: e.target.value}))}
+                                placeholder="e.g., llama3-70b-8192"
+                                className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-sm"
+                            />
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
     isOpen, 
     onClose, 
     onCloudExport, 
     onCloudImport,
+    aiSettings,
+    onUpdateAiSettings,
     ...relationshipProps 
 }) => {
     const [isExporting, setIsExporting] = useState(false);
@@ -284,6 +345,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     <div className="border-t border-gray-700"></div>
 
+                    <AiProviderSettings settings={aiSettings} onUpdate={onUpdateAiSettings} />
+
+                    <div className="border-t border-gray-700"></div>
+                    
                     <div>
                         <h3 className="text-lg font-semibold text-yellow-300 flex items-center gap-2">
                             <UploadCloudIcon className="w-6 h-6"/>

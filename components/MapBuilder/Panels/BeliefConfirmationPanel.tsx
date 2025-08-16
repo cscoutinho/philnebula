@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { BeliefConfirmationState, ProjectActivityType } from '../../../types';
 import ConfidenceSlider from '../../BeliefFlipChallenge/ConfidenceSlider';
 import { X, LightbulbIcon, SparkleIcon, RefreshCw } from '../../icons';
+import { aiService } from '../../../services/aiService';
 
 interface BeliefConfirmationPanelProps {
     state: BeliefConfirmationState | null;
@@ -10,11 +10,10 @@ interface BeliefConfirmationPanelProps {
     onStartChallenge: (belief: string, confidence: number) => void;
     sourceName: string;
     targetName: string;
-    ai: GoogleGenAI;
     logActivity: (type: ProjectActivityType, payload: { [key: string]: any }) => void;
 }
 
-const BeliefConfirmationPanel: React.FC<BeliefConfirmationPanelProps> = ({ state, onClose, onStartChallenge, sourceName, targetName, ai, logActivity }) => {
+const BeliefConfirmationPanel: React.FC<BeliefConfirmationPanelProps> = ({ state, onClose, onStartChallenge, sourceName, targetName, logActivity }) => {
     const [belief, setBelief] = useState('');
     const [confidence, setConfidence] = useState(75);
     const [isLoading, setIsLoading] = useState(false);
@@ -26,12 +25,12 @@ const BeliefConfirmationPanel: React.FC<BeliefConfirmationPanelProps> = ({ state
             setIsLoading(true);
             setBelief('');
 
-            const model = 'gemini-2.5-flash';
+            const model = aiService.getProvider();
             const systemInstruction = "You are a succinct philosophical analyst. Your job is to translate a structured conceptual link into a natural language belief statement. Respond ONLY with the belief statement itself, without any extra text or quotes.";
             const prompt = `A user has created a link: from "${sourceName}" to "${targetName}", with the relationship type(s) "${state.link.relationshipTypes.join(', ')}". Formulate a clear, affirmative, and concise belief statement that this link represents.`;
 
             try {
-                const response = await ai.models.generateContent({ model, contents: prompt, config: { systemInstruction }});
+                const response = await aiService.generateContent({ contents: prompt, systemInstruction });
                 const generatedText = response.text.trim();
                 setBelief(generatedText);
 
@@ -48,7 +47,7 @@ const BeliefConfirmationPanel: React.FC<BeliefConfirmationPanelProps> = ({ state
                         model,
                         inputTokens: usageMetadata?.promptTokenCount,
                         outputTokens: usageMetadata?.candidatesTokenCount,
-                        totalTokens: (usageMetadata?.promptTokenCount || 0) + (usageMetadata?.candidatesTokenCount || 0),
+                        totalTokens: usageMetadata?.totalTokenCount,
                     }
                 });
 
@@ -61,7 +60,7 @@ const BeliefConfirmationPanel: React.FC<BeliefConfirmationPanelProps> = ({ state
         };
 
         generateBelief();
-    }, [state, sourceName, targetName, ai, logActivity]);
+    }, [state, sourceName, targetName, logActivity]);
 
     const handleSubmit = () => {
         const dragEndTime = (window as any).__mapDragEndTime || 0;

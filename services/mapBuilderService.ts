@@ -1,10 +1,9 @@
-import { GoogleGenAI } from '@google/genai';
+import { aiService } from './aiService';
 
 export const synthesizeNoteTitle = async (
-    ai: GoogleGenAI,
     noteText: string
 ): Promise<{ title: string, provenance: any }> => {
-    const model = 'gemini-2.5-flash';
+    const model = aiService.getProvider();
     const systemInstruction = "You are an expert academic synthesizer. Your task is to distill the core idea of a text into a concise, 1-3 word conceptual title. Respond ONLY with the title itself, without any extra formatting or quotation marks.";
     const prompt = `Distill the core idea of the following text into a 1-3 word conceptual title:
 ---
@@ -13,10 +12,9 @@ export const synthesizeNoteTitle = async (
 Title:`;
 
     try {
-        const response = await ai.models.generateContent({
-            model,
+        const response = await aiService.generateContent({
             contents: prompt,
-            config: { systemInstruction }
+            systemInstruction
         });
 
         const title = response.text.trim().replace(/^["']|["']$/g, ''); // Remove quotes
@@ -29,7 +27,7 @@ Title:`;
             model,
             inputTokens: usageMetadata?.promptTokenCount,
             outputTokens: usageMetadata?.candidatesTokenCount,
-            totalTokens: (usageMetadata?.promptTokenCount || 0) + (usageMetadata?.candidatesTokenCount || 0),
+            totalTokens: usageMetadata?.totalTokenCount,
         };
         
         return { title, provenance };

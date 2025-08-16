@@ -1,5 +1,6 @@
 
 
+
 export interface RawNode {
   id: number;
   name: string;
@@ -278,6 +279,13 @@ export interface Project {
   data: AppSessionData;
 }
 
+// --- AI Provider Settings ---
+export interface AiSettings {
+    provider: 'gemini' | 'groq';
+    groqApiKey: string;
+    groqModel: string;
+}
+
 export interface MultiProjectSession {
   version: number;
   activeProjectId: string | null;
@@ -285,7 +293,16 @@ export interface MultiProjectSession {
   customRelationshipTypes: CustomRelationshipType[];
   disabledDefaultTypes: string[];
   disabledCustomTypes: string[];
+  aiSettings?: AiSettings;
 }
+
+// --- Type for Confirmation Dialog ---
+export type ConfirmationRequestHandler = (options: {
+  message: string;
+  onConfirm: () => void;
+  title?: string;
+  confirmText?: string;
+}) => void;
 
 // --- Types for Definition Analysis ---
 export interface DefinitionResult {

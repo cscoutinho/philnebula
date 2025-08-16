@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import type { D3Node, Citation, MapLink, MapBuilderProps, FloatingTooltipState, LogicalWorkbenchState, RelationshipTypeInfo, BeliefConfirmationState, KindleNote, DropOnNodeMenuState } from '../../types';
 
 import { useMapUI } from './hooks/useMapUI';
@@ -146,7 +145,6 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
     onAppendToNodeNotes,
 }) => {
     const { nodes, links } = layout;
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY! }), []);
     const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
     
     const [isExportingImg, setIsExportingImg] = useState(false);
@@ -164,7 +162,6 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
     const ui = useMapUI({ allNodes, layout, setLayout, logActivity, nodeMap });
     
     const aiHooks = useMapAI({
-        ai,
         layout,
         setLayout,
         logActivity,
@@ -377,7 +374,6 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
                         targetName={nodeMap.get(beliefConfirmationState.link.target)?.name || ''}
                         onClose={() => setBeliefConfirmationState(null)}
                         onStartChallenge={handleStartChallengeFromMap}
-                        ai={ai}
                         logActivity={logActivity}
                     />
                 </div>
@@ -393,7 +389,6 @@ const MapBuilder: React.FC<MapBuilderProps> = ({
                     onUpdateContent={ui.handleUpdateNoteContent}
                     onLogEdit={ui.handleLogNoteEdit}
                     logActivity={logActivity}
-                    ai={ai}
                 />
             )}
         </div>

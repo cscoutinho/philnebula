@@ -1,10 +1,9 @@
 import { useState, useCallback } from 'react';
-import { AppSessionData, ChallengeSession, ChallengeStep, D3Node, ProjectActivityType, SuggestedConcept } from '../types';
+import { AppSessionData, ChallengeSession, D3Node, ProjectActivityType, SuggestedConcept } from '../types';
 import * as dialecticService from '../services/dialecticService';
-import { GoogleGenAI } from '@google/genai';
+import { aiService } from '../services/aiService';
 
 export const useBeliefFlipChallenge = (
-    ai: GoogleGenAI,
     activeProjectData: AppSessionData | null,
     updateActiveProjectData: (updater: (d: AppSessionData) => AppSessionData) => void,
     logActivity: (type: ProjectActivityType, payload: { [key: string]: any }) => void,
@@ -30,7 +29,7 @@ export const useBeliefFlipChallenge = (
         setIsGeneratingSuggestions(true);
 
         try {
-            const { suggestions, provenance } = await dialecticService.suggestChallengeTopics(ai, belief, allNodes, sourceNodeIds);
+            const { suggestions, provenance } = await dialecticService.suggestChallengeTopics(aiService, belief, allNodes, sourceNodeIds);
             
             // Post-filter the suggestions to ensure source nodes are excluded, even if the AI includes them.
             const sourceIdsSet = new Set(sourceNodeIds);
@@ -57,7 +56,7 @@ export const useBeliefFlipChallenge = (
                 prompt: `[Multi-step suggestion generation for belief: "${belief}"]`,
                 systemInstruction: "[Combined system instructions for deconstruction, selection, and rationale generation]",
                 rawResponse: "",
-                model: provenance[0]?.model || 'gemini-2.5-flash',
+                model: provenance[0]?.model || aiService.getProvider(),
                 inputTokens: 0,
                 outputTokens: 0,
                 totalTokens: 0,
@@ -76,13 +75,13 @@ export const useBeliefFlipChallenge = (
         } finally {
             setIsGeneratingSuggestions(false);
         }
-    }, [ai, allNodes, logActivity]);
+    }, [allNodes, logActivity]);
 
     const buildPath = useCallback(async (selectedConcepts: SuggestedConcept[]) => {
         if (!activeChallenge) return;
         setIsBuildingPath(true);
         try {
-            const { path: challengePath, provenance } = await dialecticService.buildChallengePathFromSelection(ai, activeChallenge.beliefStatement.belief, selectedConcepts);
+            const { path: challengePath, provenance } = await dialecticService.buildChallengePathFromSelection(aiService, activeChallenge.beliefStatement.belief, selectedConcepts);
             
             setActiveChallenge(prev => prev ? ({ ...prev, challengePath, status: 'active' }) : null);
 
@@ -99,7 +98,7 @@ export const useBeliefFlipChallenge = (
         } finally {
             setIsBuildingPath(false);
         }
-    }, [activeChallenge, ai, logActivity]);
+    }, [activeChallenge, logActivity]);
 
 
     const updateStepConfidence = useCallback((stepIndex: number, confidence: number) => {
@@ -124,7 +123,7 @@ export const useBeliefFlipChallenge = (
         setActiveChallenge(sessionForSummaryView);
 
         try {
-            const { synthesis: finalSynthesis, provenance } = await dialecticService.generateFinalSynthesis(ai, activeChallenge);
+            const { synthesis: finalSynthesis, provenance } = await dialecticService.generateFinalSynthesis(aiService, activeChallenge);
             
             const finalCompletedSession: ChallengeSession = {
                 ...sessionForSummaryView,
@@ -154,7 +153,7 @@ export const useBeliefFlipChallenge = (
         } finally {
             setIsGeneratingSynthesis(false);
         }
-    }, [activeChallenge, ai, updateActiveProjectData, logActivity]);
+    }, [activeChallenge, updateActiveProjectData, logActivity]);
     
     const discardChallenge = useCallback(() => {
         if (!activeChallenge) return;

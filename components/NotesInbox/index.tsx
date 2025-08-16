@@ -1,5 +1,6 @@
+
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import type { KindleNote, ImportedNoteSource, PublicationType } from '../../types';
+import type { KindleNote, ImportedNoteSource, PublicationType, ConfirmationRequestHandler } from '../../types';
 import * as notesParser from '../../services/notesParser';
 import { ChevronLeft, BookOpenIcon, UploadCloudIcon, Trash2, Edit, Check, X, Square, CheckSquare, RefreshCw, BookTextIcon, FileTextIcon, GraduationCapIcon } from '../icons';
 
@@ -14,6 +15,7 @@ interface NotesInboxProps {
     onDeleteSource: (sourceId: string) => void;
     onUpdateSourceMetadata: (sourceId: string, metadata: Partial<Omit<ImportedNoteSource, 'id' | 'notes'>>) => void;
     onMarkNotesAsProcessed: (noteIds: string[]) => void;
+    onRequestConfirmation: ConfirmationRequestHandler;
 }
 
 
@@ -57,7 +59,7 @@ const NoteCard: React.FC<{
     );
 };
 
-const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSources, processedNoteIds, onImportNotes, onDeleteSource, onUpdateSourceMetadata, onMarkNotesAsProcessed }) => {
+const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSources, processedNoteIds, onImportNotes, onDeleteSource, onUpdateSourceMetadata, onMarkNotesAsProcessed, onRequestConfirmation }) => {
     const [view, setView] = useState<'list' | 'selectType' | 'uploadWithDoi' | 'confirm'>('list');
     const [importType, setImportType] = useState<PublicationType | null>(null);
     const [pendingImport, setPendingImport] = useState<PendingSource | null>(null);
@@ -437,7 +439,7 @@ const NotesInbox: React.FC<NotesInboxProps> = ({ isOpen, onClose, importedNoteSo
                                 <div className="relative">
                                     <div className="absolute top-1 right-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                                         <button onClick={(e) => { e.stopPropagation(); setEditingSource(JSON.parse(JSON.stringify(source))); }} className="p-1 text-gray-400 hover:text-cyan-400" aria-label="Edit source metadata"><Edit className="w-4 h-4"/></button>
-                                        <button onClick={(e) => { e.stopPropagation(); if(confirm('Are you sure you want to delete this source and all its notes?')) {if (selectedSourceId === source.id) {setSelectedSourceId(null);} onDeleteSource(source.id);}}} className="p-1 text-gray-400 hover:text-red-400" aria-label="Delete source"><Trash2 className="w-4 h-4"/></button>
+                                        <button onClick={(e) => { e.stopPropagation(); onRequestConfirmation({ message: 'Are you sure you want to delete this source and all its notes?', title: `Delete Source: ${source.title}`, confirmText: 'Delete', onConfirm: () => {if (selectedSourceId === source.id) {setSelectedSourceId(null);} onDeleteSource(source.id);}}); }} className="p-1 text-gray-400 hover:text-red-400" aria-label="Delete source"><Trash2 className="w-4 h-4"/></button>
                                     </div>
                                     <div onClick={() => setSelectedSourceId(source.id)} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSelectedSourceId(source.id)} role="button" tabIndex={0} className="w-full text-left p-3 flex items-center gap-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded-md">
                                         {source.coverImageUrl ? (

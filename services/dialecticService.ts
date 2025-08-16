@@ -1,34 +1,32 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { D3Node, ChallengeStep, ChallengeSession, SuggestedConcept } from '../types';
+import { aiService } from './aiService';
 
 export const suggestChallengeTopics = async (
-    ai: GoogleGenAI,
+    ai: typeof aiService,
     belief: string,
     allNodes: D3Node[],
     sourceNodeIds: (string | number)[] = []
 ): Promise<{suggestions: SuggestedConcept[], provenance: any[]}> => {
-    const model = 'gemini-2.5-flash';
+    const model = ai.getProvider();
     const provenanceLogs = [];
 
     // Step 1: Deconstruct the belief into core assumptions.
     const deconstructionSystemInstruction = "You are an expert philosophical analyst. Your task is to deconstruct a user's belief into its fundamental philosophical presuppositions. Respond ONLY with a JSON object.";
     const deconstructionPrompt = `A user holds the belief: "${belief}". Deconstruct this belief into its core philosophical presuppositions. Identify up to 3 distinct assumptions (e.g., metaphysical, axiological, epistemological). For each, provide a concise 'assumption' string. Respond ONLY with a JSON array of objects, each containing an 'assumption' key.`;
 
-    const deconstructionResponse = await ai.models.generateContent({
-        model,
+    const deconstructionResponse = await ai.generateContent({
         contents: deconstructionPrompt,
-        config: {
-            systemInstruction: deconstructionSystemInstruction,
-            responseMimeType: 'application/json',
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        assumption: { type: Type.STRING }
-                    },
-                    required: ["assumption"]
-                }
+        systemInstruction: deconstructionSystemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    assumption: { type: Type.STRING }
+                },
+                required: ["assumption"]
             }
         }
     });
@@ -37,7 +35,7 @@ export const suggestChallengeTopics = async (
     provenanceLogs.push({
         step: "Deconstruction",
         prompt: deconstructionPrompt, systemInstruction: deconstructionSystemInstruction, rawResponse: deconstructionResponse.text,
-        model, inputTokens: deconstructUsage?.promptTokenCount, outputTokens: deconstructUsage?.candidatesTokenCount, totalTokens: (deconstructUsage?.promptTokenCount || 0) + (deconstructUsage?.candidatesTokenCount || 0),
+        model, inputTokens: deconstructUsage?.promptTokenCount, outputTokens: deconstructUsage?.candidatesTokenCount, totalTokens: deconstructUsage?.totalTokenCount,
     });
 
     const assumptionsResult = JSON.parse(deconstructionResponse.text) as { assumption: string }[];
@@ -69,16 +67,13 @@ LIST OF ALL TOPICS:
 ${JSON.stringify(allNodeNames)}
 `;
     
-    const selectionResponse = await ai.models.generateContent({
-        model,
+    const selectionResponse = await ai.generateContent({
         contents: selectionPrompt,
-        config: {
-            systemInstruction: selectionSystemInstruction,
-            responseMimeType: 'application/json',
-            responseSchema: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            }
+        systemInstruction: selectionSystemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
         }
     });
     
@@ -91,7 +86,7 @@ ${JSON.stringify(allNodeNames)}
         model, 
         inputTokens: selectionUsage?.promptTokenCount, 
         outputTokens: selectionUsage?.candidatesTokenCount, 
-        totalTokens: (selectionUsage?.promptTokenCount || 0) + (selectionUsage?.candidatesTokenCount || 0),
+        totalTokens: selectionUsage?.totalTokenCount,
     });
     
     const selectedTopicNames = JSON.parse(selectionResponse.text) as string[];
@@ -111,22 +106,19 @@ Topics: ${JSON.stringify(matchedNodes.map(n => n.name))}
     
 Respond with a JSON array of objects, each containing 'topicName' and 'rationale'.`;
 
-    const rationaleResponse = await ai.models.generateContent({
-        model,
+    const rationaleResponse = await ai.generateContent({
         contents: rationalePrompt,
-        config: {
-            systemInstruction: rationaleSystemInstruction,
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        topicName: { type: Type.STRING },
-                        rationale: { type: Type.STRING }
-                    },
-                    required: ["topicName", "rationale"]
-                }
+        systemInstruction: rationaleSystemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    topicName: { type: Type.STRING },
+                    rationale: { type: Type.STRING }
+                },
+                required: ["topicName", "rationale"]
             }
         }
     });
@@ -135,7 +127,7 @@ Respond with a JSON array of objects, each containing 'topicName' and 'rationale
     provenanceLogs.push({
         step: "Rationale Generation",
         prompt: rationalePrompt, systemInstruction: rationaleSystemInstruction, rawResponse: rationaleResponse.text,
-        model, inputTokens: rUsage?.promptTokenCount, outputTokens: rUsage?.candidatesTokenCount, totalTokens: (rUsage?.promptTokenCount || 0) + (rUsage?.candidatesTokenCount || 0),
+        model, inputTokens: rUsage?.promptTokenCount, outputTokens: rUsage?.candidatesTokenCount, totalTokens: rUsage?.totalTokenCount,
     });
 
     const rationalesData = JSON.parse(rationaleResponse.text) as { topicName: string; rationale: string }[];
@@ -152,11 +144,11 @@ Respond with a JSON array of objects, each containing 'topicName' and 'rationale
 
 
 export const buildChallengePathFromSelection = async (
-    ai: GoogleGenAI,
+    ai: typeof aiService,
     belief: string,
     selectedConcepts: SuggestedConcept[]
 ): Promise<{ path: ChallengeStep[], provenance: any }> => {
-    const model = 'gemini-2.5-flash';
+    const model = ai.getProvider();
     
     const systemInstruction = "You are an expert educator. Your task is to organize a list of challenging topics into a logical pedagogical sequence and create learning materials for each. Respond ONLY with a JSON array.";
     const prompt = `A user holds the belief: "${belief}". They have selected the following topics to build their challenge path. Your task is to:
@@ -166,24 +158,21 @@ export const buildChallengePathFromSelection = async (
    - a single 'provocativeQuestion' to make the user reflect on their belief in light of this concept.
 Here is the list of user-selected topics: ${JSON.stringify(selectedConcepts.map(c => c.topicName))}`;
 
-    const response = await ai.models.generateContent({
-        model,
+    const response = await ai.generateContent({
         contents: prompt,
-        config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            temperature: 0.8,
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        topicName: { type: Type.STRING },
-                        summary: { type: Type.STRING },
-                        provocativeQuestion: { type: Type.STRING },
-                    },
-                    required: ["topicName", "summary", "provocativeQuestion"]
-                }
+        systemInstruction,
+        responseMimeType: 'application/json',
+        temperature: 0.8,
+        responseSchema: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    topicName: { type: Type.STRING },
+                    summary: { type: Type.STRING },
+                    provocativeQuestion: { type: Type.STRING },
+                },
+                required: ["topicName", "summary", "provocativeQuestion"]
             }
         }
     });
@@ -204,17 +193,17 @@ Here is the list of user-selected topics: ${JSON.stringify(selectedConcepts.map(
     const provenance = {
         step: "Path Building",
         prompt, systemInstruction, rawResponse: response.text,
-        model, inputTokens: usageMetadata?.promptTokenCount, outputTokens: usageMetadata?.candidatesTokenCount, totalTokens: (usageMetadata?.promptTokenCount || 0) + (usageMetadata?.candidatesTokenCount || 0),
+        model, inputTokens: usageMetadata?.promptTokenCount, outputTokens: usageMetadata?.candidatesTokenCount, totalTokens: usageMetadata?.totalTokenCount,
     };
     
     return { path: challengePath, provenance };
 };
 
 export const generateFinalSynthesis = async (
-    ai: GoogleGenAI,
+    ai: typeof aiService,
     session: ChallengeSession
 ): Promise<{synthesis: string, provenance: any}> => {
-    const model = 'gemini-2.5-flash';
+    const model = ai.getProvider();
     const systemInstruction = "You are an objective philosophical analyst. Your role is to provide a neutral and insightful meta-analysis of a user's intellectual journey. Avoid praise, personal opinions, or colloquial language. Focus on identifying patterns, inflection points, and proposing reflective questions. The response must be structured and academic, using markdown for formatting.";
     
     const confidenceJourney = session.challengePath
@@ -242,13 +231,10 @@ A numbered list of 2-3 new, insightful philosophical questions that arise from t
 
 Do not use a congratulatory or emotional tone. Maintain a neutral, analytical perspective.`;
 
-    const response = await ai.models.generateContent({
-        model,
+    const response = await ai.generateContent({
         contents: prompt,
-        config: { 
-            systemInstruction,
-            temperature: 0.7
-        }
+        systemInstruction,
+        temperature: 0.7
     });
     
     const { usageMetadata } = response;
@@ -259,7 +245,7 @@ Do not use a congratulatory or emotional tone. Maintain a neutral, analytical pe
         model,
         inputTokens: usageMetadata?.promptTokenCount,
         outputTokens: usageMetadata?.candidatesTokenCount,
-        totalTokens: (usageMetadata?.promptTokenCount || 0) + (usageMetadata?.candidatesTokenCount || 0),
+        totalTokens: usageMetadata?.totalTokenCount,
     };
     
     return { synthesis: response.text, provenance };

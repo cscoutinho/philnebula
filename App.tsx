@@ -1,9 +1,8 @@
 
 
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { GoogleGenAI } from '@google/genai';
-import { parseMarkdown, flattenData } from './services/dataParser';
-import { D3Node, D3Link, Publication, CustomRelationshipType, MapNode, KindleNote, ImportedNoteSource } from './types';
+import { AiSettings, CustomRelationshipType, D3Link, D3Node, ImportedNoteSource, KindleNote, MapNode, Publication, ConfirmationRequestHandler } from './types';
 import NebulaGraph from './components/NebulaGraph';
 import InfoPanel from './components/InfoPanel';
 import SearchInput from './components/SearchInput';
@@ -16,6 +15,7 @@ import SettingsModal from './components/SettingsModal';
 import ProjectSwitcher from './components/ProjectSwitcher';
 import ProjectDiaryPanel from './components/ProjectDiaryPanel';
 import BeliefFlipChallenge from './components/BeliefFlipChallenge';
+import ConfirmDialog from './components/ConfirmDialog';
 import { BrainCircuit, SettingsIcon, DiaryIcon, FlaskConicalIcon, LightbulbIcon, BookOpenIcon } from './components/icons';
 import { useSessionManager } from './hooks/useSessionManager';
 import { useFeedManager } from './hooks/useFeedManager';
@@ -24,6 +24,8 @@ import { useBeliefFlipChallenge } from './hooks/useBeliefFlipChallenge';
 import StudioPanel from './components/MapBuilder/Panels/StudioPanel';
 import NotesInbox from './components/NotesInbox';
 import * as mapBuilderService from './services/mapBuilderService';
+import { parseMarkdown, flattenData } from './services/dataParser';
+import { aiService } from './services/aiService';
 
 const defaultRelationshipTypes = [
     // Foundational & Structural
@@ -51,9 +53,6 @@ const App: React.FC = () => {
     // Core Data
     const [data, setData] = useState<{ nodes: D3Node[], links: D3Link[] } | null>(null);
 
-    // AI Instance
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY! }), []);
-
     // --- Custom Hooks for State and Logic Management ---
     const {
         session,
@@ -67,6 +66,13 @@ const App: React.FC = () => {
         handleDeleteProject,
         handleRenameProject,
     } = useSessionManager();
+
+    // Configure AI Service when settings change
+    useEffect(() => {
+        if (session.aiSettings) {
+            aiService.configure(session.aiSettings);
+        }
+    }, [session.aiSettings]);
 
     const {
         allPublications,
@@ -96,10 +102,9 @@ const App: React.FC = () => {
         searchAttempted,
         findRelatedConcepts,
         handleSearchChange,
-    } = useNebula(data, ai, logActivity);
+    } = useNebula(data, logActivity);
     
     const beliefChallenge = useBeliefFlipChallenge(
-        ai,
         activeProjectData,
         updateActiveProjectData,
         logActivity,
@@ -115,6 +120,36 @@ const App: React.FC = () => {
     const [isChallengeOpen, setIsChallengeOpen] = useState(false);
     const [initialWorkbenchData, setInitialWorkbenchData] = useState<any>(null);
     
+    // --- Confirmation Dialog State ---
+    const [confirmation, setConfirmation] = useState<{
+        isOpen: boolean;
+        message: string;
+        onConfirm: () => void;
+        title?: string;
+        confirmText?: string;
+    }>({
+        isOpen: false,
+        message: '',
+        onConfirm: () => {},
+    });
+
+    const requestConfirmation: ConfirmationRequestHandler = useCallback((options) => {
+        setConfirmation({
+            isOpen: true,
+            message: options.message,
+            title: options.title,
+            confirmText: options.confirmText,
+            onConfirm: () => {
+                options.onConfirm();
+                setConfirmation(c => ({...c, isOpen: false}));
+            },
+        });
+    }, []);
+
+    const handleCancelConfirmation = () => {
+        setConfirmation(c => ({...c, isOpen: false}));
+    };
+
     // --- Derived State and Memos ---
     const allRelationshipTypes = useMemo(() => {
         const disabledDefaults = new Set(session.disabledDefaultTypes || []);
@@ -173,6 +208,13 @@ const App: React.FC = () => {
         setSession(prev => ({
             ...prev,
             customRelationshipTypes: updater(prev.customRelationshipTypes || []),
+        }));
+    }, [setSession]);
+
+    const handleUpdateAiSettings = useCallback((updater: (currentSettings: AiSettings) => AiSettings) => {
+        setSession(prev => ({
+            ...prev,
+            aiSettings: updater(prev.aiSettings || { provider: 'gemini', groqApiKey: '', groqModel: 'moonshotai/kimi-k2-instruct' }),
         }));
     }, [setSession]);
 
@@ -421,7 +463,7 @@ const App: React.FC = () => {
         handleMarkNotesAsProcessed([note.id]);
 
         try {
-            const { title, provenance } = await mapBuilderService.synthesizeNoteTitle(ai, note.text);
+            const { title, provenance } = await mapBuilderService.synthesizeNoteTitle(note.text);
             const source = activeProjectData?.importedNoteSources?.find(s => s.id === note.sourceId);
 
             logActivity('ADD_NOTE_TO_MAP', {
@@ -455,7 +497,7 @@ const App: React.FC = () => {
                 processedNoteIds: (d.processedNoteIds || []).filter(id => id !== note.id)
             }));
         }
-    }, [ai, updateActiveProjectData, handleMarkNotesAsProcessed, logActivity, activeProjectData?.importedNoteSources]);
+    }, [updateActiveProjectData, handleMarkNotesAsProcessed, logActivity, activeProjectData?.importedNoteSources]);
 
     const handleAddMultipleNotesToMap = useCallback(async (notes: KindleNote[], position: { x: number; y: number }) => {
         const gridCols = Math.ceil(Math.sqrt(notes.length));
@@ -591,6 +633,7 @@ const App: React.FC = () => {
                     onDeleteSource={handleDeleteNoteSource}
                     onUpdateSourceMetadata={handleUpdateNoteSourceMetadata}
                     onMarkNotesAsProcessed={handleMarkNotesAsProcessed}
+                    onRequestConfirmation={requestConfirmation}
                 />
             )}
             {renderView()}
@@ -619,6 +662,7 @@ const App: React.FC = () => {
                         onSwitchProject={handleSwitchProject}
                         onDeleteProject={handleDeleteProject}
                         onRenameProject={handleRenameProject}
+                        onRequestConfirmation={requestConfirmation}
                     />
                 </div>
                  <div className="flex items-center gap-2 pointer-events-auto">
@@ -675,7 +719,6 @@ const App: React.FC = () => {
                     analysisMode={true}
                     onClose={() => setIsArgumentStudioOpen(false)}
                     onDeconstruct={handleDeconstructArgument}
-                    ai={ai}
                     // Props for note-taking mode, not used in analysis mode
                     state={{ nodeId: '', x: window.innerWidth / 2, y: window.innerHeight / 2 }}
                     initialNotes=""
@@ -703,11 +746,22 @@ const App: React.FC = () => {
                 onCloudImport={handleCloudImport}
                 customRelationshipTypes={session.customRelationshipTypes || []}
                 onUpdateCustomRelationshipTypes={handleUpdateCustomRelationshipTypes}
-                ai={ai}
                 defaultRelationshipTypes={defaultRelationshipTypes}
                 disabledDefaultTypes={session.disabledDefaultTypes || []}
                 disabledCustomTypes={session.disabledCustomTypes || []}
                 onToggleRelationshipType={handleToggleRelationshipType}
+                onRequestConfirmation={requestConfirmation}
+                aiSettings={session.aiSettings}
+                onUpdateAiSettings={handleUpdateAiSettings}
+            />
+
+            <ConfirmDialog
+                isOpen={confirmation.isOpen}
+                message={confirmation.message}
+                onConfirm={confirmation.onConfirm}
+                onCancel={handleCancelConfirmation}
+                title={confirmation.title}
+                confirmText={confirmation.confirmText}
             />
         </div>
     );

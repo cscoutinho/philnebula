@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { MultiProjectSession, Project, AppSessionData, MapLink, ProjectActivityType, ProjectActivity, ImportedNoteSource } from '../types';
+import { MultiProjectSession, Project, AppSessionData, MapLink, ProjectActivityType, ProjectActivity, ImportedNoteSource, AiSettings } from '../types';
 
 const MULTI_PROJECT_SESSION_VERSION = 10;
 
@@ -19,6 +19,12 @@ const createNewProject = (name: string): Project => {
             processedNoteIds: [],
         },
     };
+};
+
+const defaultAiSettings: AiSettings = {
+    provider: 'gemini',
+    groqApiKey: '',
+    groqModel: 'moonshotai/kimi-k2-instruct',
 };
 
 const loadInitialSession = (): MultiProjectSession => {
@@ -98,6 +104,8 @@ const loadInitialSession = (): MultiProjectSession => {
                 if (!savedSession.customRelationshipTypes) { savedSession.customRelationshipTypes = []; }
                 if (!savedSession.disabledDefaultTypes) { savedSession.disabledDefaultTypes = []; }
                 if (!savedSession.disabledCustomTypes) { savedSession.disabledCustomTypes = []; }
+                if (!savedSession.aiSettings) { savedSession.aiSettings = defaultAiSettings; }
+
 
                 if (!savedSession.projects.some((p: Project) => p.id === savedSession.activeProjectId)) {
                     savedSession.activeProjectId = savedSession.projects[0]?.id || null;
@@ -144,6 +152,7 @@ const loadInitialSession = (): MultiProjectSession => {
         customRelationshipTypes: [],
         disabledDefaultTypes: [],
         disabledCustomTypes: [],
+        aiSettings: defaultAiSettings,
     };
 };
 
